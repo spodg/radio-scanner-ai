@@ -41,20 +41,20 @@ import numpy as np
 # ---------------------------------------------------------------------------
 # JSONL_PATH kept for reference only (no longer written by GPU server).
 # All reads/writes go through the Pi dashboard HTTP API now.
-JSONL_PATH = r"\\d1\RadioScanner\scanner_log.jsonl"  # legacy, unused
+JSONL_PATH = ""  # legacy, unused
 
 # Base path where audio clips are stored (the 'clip' field in records is
 # relative or absolute; we resolve against this if needed).
 CLIPS_BASE = os.environ.get(
     "SCANNER_CLIPS_BASE",
-    r"\\d1\RadioScanner\clips"
+    r"\\YOUR_NAS\share\clips"  # CHANGE THIS: UNC path to your NAS clips folder
 )
 
 # Pi clips are stored on the NAS under a different subfolder.
 # The Pi writes paths like "/mnt/nas/clips/file.wav" — we map
-# /mnt/nas/ -> \\d1\RadioScanner\ for Windows access.
+# /mnt/nas/ -> \\NAS\share\ for Windows access.
 NAS_LINUX_PREFIX = "/mnt/nas/"
-NAS_WINDOWS_PREFIX = r"\\d1\RadioScanner" + "\\"
+NAS_WINDOWS_PREFIX = r"\\YOUR_NAS\share" + "\\"  # CHANGE THIS: your NAS UNC prefix
 
 # Whisper model settings (same as the scanner logger for consistency).
 WHISPER_MODEL = os.environ.get("WHISPER_MODEL", "large-v3")
@@ -115,7 +115,8 @@ def _get_pi_ip():
         return ip
     except socket.gaierror as e:
         # Fallback to hardcoded IP if DNS fails completely
-        _pi_ip_cache = "192.168.2.87"
+        # CHANGE THIS to your Pi's actual IP address
+        _pi_ip_cache = "192.168.1.50"
         print(f"[gpu] DNS failed for pi3: {e}, using fallback {_pi_ip_cache}")
         return _pi_ip_cache
 

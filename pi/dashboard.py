@@ -63,7 +63,7 @@ def _run_text_decoders(text, channel_name):
 
 # Config
 STATUS_FILE = Path("/home/pi/scanner/status.json")
-GPU_SERVER_URL = os.environ.get("GPU_SERVER_URL", "http://D1:5555")
+GPU_SERVER_URL = os.environ.get("GPU_SERVER_URL", "")
 
 
 # --- Helpers ----------------------------------------------------------------
