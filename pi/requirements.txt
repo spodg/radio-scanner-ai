@@ -1,0 +1,7 @@
+# Pi Scanner - Python Dependencies
+# Install: pip install -r requirements.txt
+
+flask>=2.3
+pyserial>=3.5
+numpy>=1.24
+pywhispercpp>=1.0

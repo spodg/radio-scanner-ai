@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+venv/
+.venv/
+*.egg-info/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Data (don't commit recordings or database)
+*.db
+*.wav
+*.mp3
+clips/
+scanner_log.txt
+scanner_log.jsonl
+status.json
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Hypothesis (testing)
+.hypothesis/

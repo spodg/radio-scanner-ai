@@ -1,0 +1,23 @@
+[Unit]
+Description=Pi Local Transcriber (Whisper)
+After=pi-scanner.service
+Wants=pi-scanner.service
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/scanner
+ExecStart=/home/pi/scanner/venv/bin/python3 /home/pi/scanner/pi_transcriber.py
+Restart=always
+RestartSec=15
+# Whisper is CPU-heavy but non-critical — throttle aggressively
+Nice=15
+CPUQuota=200%
+# Memory cap: Whisper tiny.en uses ~200MB; cap at 400MB to prevent OOM
+MemoryMax=400M
+MemorySwapMax=100M
+# Expendable: kill this first if system runs out of memory
+OOMScoreAdjust=500
+
+[Install]
+WantedBy=multi-user.target

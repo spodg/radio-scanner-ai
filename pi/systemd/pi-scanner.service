@@ -1,0 +1,21 @@
+[Unit]
+Description=Pi Scanner Capture Station
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/scanner
+ExecStartPre=+/home/pi/scanner/ensure_nas.sh
+ExecStart=/home/pi/scanner/venv/bin/python3 /home/pi/scanner/pi_scanner.py
+Restart=always
+RestartSec=10
+# Memory limit: cap at 600MB to prevent OOM freeze (restarts if exceeded)
+MemoryMax=600M
+MemorySwapMax=200M
+# CPU: allow up to 3 of 4 cores
+CPUQuota=300%
+
+[Install]
+WantedBy=multi-user.target

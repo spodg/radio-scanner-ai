@@ -1,0 +1,9 @@
+# GPU Transcription Server - Python Dependencies
+# Install: pip install -r requirements.txt
+#
+# CUDA: Install NVIDIA CUDA toolkit first (https://developer.nvidia.com/cuda-downloads)
+# cuDNN: Included with faster-whisper's CTranslate2 backend
+
+flask>=2.3
+faster-whisper>=1.0
+numpy>=1.24

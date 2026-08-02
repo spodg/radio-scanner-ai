@@ -1,0 +1,19 @@
+[Unit]
+Description=Pi Scanner Dashboard
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/scanner
+ExecStartPre=+/home/pi/scanner/ensure_nas.sh
+ExecStart=/home/pi/scanner/venv/bin/python3 /home/pi/scanner/dashboard_updated.py
+Restart=always
+RestartSec=5
+# Dashboard is lightweight — protect from OOM kill
+OOMScoreAdjust=-500
+MemoryMax=150M
+
+[Install]
+WantedBy=multi-user.target
