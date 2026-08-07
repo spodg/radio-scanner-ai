@@ -1,0 +1,7 @@
+# Pin C-Media USB Audio (scanner sound card) to a fixed ALSA card name.
+# This prevents the card number from shifting when USB devices re-enumerate.
+# The scanner config uses: AUDIO_DEVICE = "plughw:scanner,0"
+#
+# Install: sudo cp 89-scanner-audio.rules /etc/udev/rules.d/
+#          sudo udevadm control --reload-rules && sudo udevadm trigger
+SUBSYSTEM=="sound", ACTION=="add", ATTRS{idVendor}=="0d8c", ATTRS{idProduct}=="0014", ATTR{id}="scanner"

@@ -45,6 +45,7 @@ from phonetic import decode_plates
 from phone import detect_phones, format_phones
 import scanner_db
 from nas_sync import NasSyncWorker, get_clips_dir
+from audio_health import AudioHealthMonitor, find_usb_audio_device
 
 
 def _run_text_decoders(text, channel_name):
@@ -83,12 +84,20 @@ def _generate_record_id():
 class PiScannerStation:
     def __init__(self):
         self.scanner = ScannerSerial(config.SERIAL_PORT, config.SERIAL_BAUD)
+        # Auto-detect USB audio device (survives card number changes)
+        detected_device = find_usb_audio_device()
+        if detected_device != config.AUDIO_DEVICE:
+            print(f"[init] Audio device auto-detected: {detected_device} "
+                  f"(config had: {config.AUDIO_DEVICE})")
+        else:
+            print(f"[init] Audio device: {detected_device}")
         self.audio = ALSAAudioCapture(
-            device=config.AUDIO_DEVICE,
+            device=detected_device,
             sample_rate=config.AUDIO_SAMPLE_RATE,
             channels=config.AUDIO_CHANNELS,
             prebuffer_sec=config.AUDIO_PREBUFFER_SEC,
         )
+        self._audio_health = AudioHealthMonitor(self.audio, config)
         self._active_capture_id = None
         self._active_start_time = None
         self._active_system_name = ""
@@ -258,12 +267,16 @@ class PiScannerStation:
         audio = self.audio.end_capture(cid)
         if audio.size == 0:
             print("[_on_stop] empty audio", file=sys.stderr, flush=True)
+            self._audio_health.report_capture(had_audio=False)
             return
 
         rms = float(np.sqrt(np.mean(audio ** 2)))
         if rms < config.WHISPER_SILENCE_RMS:
             print(f"[_on_stop] silent rms={rms:.5f}", file=sys.stderr, flush=True)
+            self._audio_health.report_capture(had_audio=False)
             return
+
+        self._audio_health.report_capture(had_audio=True)
 
         print(f"[_on_stop] processing {state.display_name} dur={duration:.1f}s rms={rms:.4f} samples={audio.size}", file=sys.stderr, flush=True)
 
@@ -625,6 +638,9 @@ class PiScannerStation:
 
         # Start NAS sync worker (checks NAS/GPU availability, syncs local clips)
         self._nas_sync.start()
+
+        # Start audio health watchdog
+        self._audio_health.start()
 
         poller = ScannerPoller(
             self.scanner,
