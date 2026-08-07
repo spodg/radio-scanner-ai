@@ -197,9 +197,15 @@ PROFILES = [
 # counties like Adams, Noble, DeKalb, Whitley). We use the Allen County signal
 # scheme + Indiana 10-codes as a best guess and flag it approximate. This is
 # ONLY used for channels that look like law enforcement (see pick_profile).
+# Generic fallback for Indiana Project Hoosier agencies outside Allen County /
+# Fort Wayne (e.g. Noble, DeKalb, Whitley). Based on Allen County's broad set
+# but with ISP-standard overrides where they differ (signal 60 = Narcotics,
+# NOT Homicide).
+_HOOSIER_SIGNALS = {**ALLEN_SIGNALS, **ISP_SIGNALS}
+
 DEFAULT_PROFILE = Profile(
     name="Indiana (generic)",
-    signals=ALLEN_SIGNALS,
+    signals=_HOOSIER_SIGNALS,
     ten_codes=INDIANA_TEN_CODES,
     uses_bare_signals=True,
     keywords=[],

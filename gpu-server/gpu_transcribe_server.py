@@ -444,64 +444,58 @@ class TranscriptionWorker:
             self._stop.wait(POLL_INTERVAL)
         print("[gpu:fresh] Stopped.")
 
-    # === Thread 2: Re-transcribe Pi items (low priority, batched, polls every 10s) ===
+    # === Thread 2: Re-transcribe Pi items (low priority, one at a time, newest first) ===
     def _run_retrans(self):
-        print(f"[gpu:retrans] Worker started. Polling every 10s...")
+        print(f"[gpu:retrans] Worker started. Processing newest first, one at a time...")
         time.sleep(5)  # let fresh worker get a head start
         while not self._stop.is_set():
             try:
-                self._retranscribe_batch()
+                did_work = self._retranscribe_one()
+                if not did_work:
+                    self._stop.wait(10)
             except Exception as e:
                 print(f"[gpu:retrans] Error: {e}")
                 traceback.print_exc()
-            self._stop.wait(10)
+                self._stop.wait(10)
         print("[gpu:retrans] Stopped.")
 
-    def _retranscribe_batch(self):
-        pi_records = load_pi_transcribed_records(limit=100)
+    def _retranscribe_one(self):
+        """Fetch and re-transcribe a single record (newest first). Returns True if work was done."""
+        pi_records = load_pi_transcribed_records(limit=1)
         if not pi_records:
-            return
-        print(f"[gpu:retrans] Found {len(pi_records)} Pi-transcribed item(s) to improve.")
-        updates_map = {}
-        for record in pi_records:
-            if self._stop.is_set():
-                break
-            record_id = record["id"]
-            clip_path = record.get("clip")
-            old_text = record.get("text", "")
-            name = record.get("name", "?")
-            time_str = record.get("time", "?")
+            return False
 
-            if not clip_path:
-                updates_map[record_id] = {"transcribed_by": "gpu"}
-                continue
+        record = pi_records[0]
+        record_id = record["id"]
+        clip_path = record.get("clip")
+        old_text = record.get("text", "")
+        name = record.get("name", "?")
+        time_str = record.get("time", "?")
 
-            audio = load_audio(clip_path)
-            if audio.size == 0:
-                updates_map[record_id] = {"transcribed_by": "gpu"}
-                continue
+        if not clip_path:
+            update_jsonl_record(record_id, {"text": old_text, "transcribed_by": "gpu"})
+            return True
 
-            # Transcribe (no lock — CTranslate2 is thread-safe)
-            try:
-                text = self.transcriber.transcribe(audio)
-            except Exception as e:
-                print(f"[gpu:retrans] Error for {record_id}: {e}")
-                updates_map[record_id] = {"transcribed_by": "gpu"}
-                continue
+        audio = load_audio(clip_path)
+        if audio.size == 0:
+            update_jsonl_record(record_id, {"text": old_text, "transcribed_by": "gpu"})
+            return True
 
-            updates_map[record_id] = {"text": text, "transcribed_by": "gpu"}
-            self._stats["total_retranscribed"] += 1
-            self._stats["last_transcription"] = datetime.now().isoformat()
-            changed = " [IMPROVED]" if text != old_text else ""
-            display_text = text[:70] + "..." if len(text) > 70 else text
-            print(f"[gpu:retrans] {time_str} | {name} -> {display_text or '(no speech)'}{changed}")
+        try:
+            text = self.transcriber.transcribe(audio)
+        except Exception as e:
+            print(f"[gpu:retrans] Error for {record_id}: {e}")
+            update_jsonl_record(record_id, {"text": old_text, "transcribed_by": "gpu"})
+            return True
 
-        if updates_map:
-            success = batch_update_jsonl(updates_map)
-            if success:
-                print(f"[gpu:retrans] Batch-updated {len(updates_map)} record(s).")
-            else:
-                print(f"[gpu:retrans] Batch write FAILED.")
+        update_jsonl_record(record_id, {"text": text, "transcribed_by": "gpu"})
+        self._stats["total_retranscribed"] += 1
+        self._stats["last_transcription"] = datetime.now().isoformat()
+        changed = " [IMPROVED]" if text != old_text else ""
+        old_display = old_text[:100] + "..." if len(old_text) > 100 else old_text
+        new_display = text[:100] + "..." if len(text) > 100 else text
+        print(f"[gpu:retrans] {time_str} | {name} | OLD: {old_display or '(no speech)'} | NEW: {new_display or '(no speech)'}{changed}")
+        return True
 
     def _transcribe_record(self, record: dict):
         record_id = record["id"]

@@ -44,6 +44,7 @@ from codes import decode_for
 from phonetic import decode_plates
 from phone import detect_phones, format_phones
 import scanner_db
+from nas_sync import NasSyncWorker, get_clips_dir
 
 
 def _run_text_decoders(text, channel_name):
@@ -93,8 +94,9 @@ class PiScannerStation:
         self._active_system_name = ""
         self._stop = threading.Event()
         self._transcriber = None
+        self._nas_sync = NasSyncWorker()
 
-        Path(config.CLIPS_DIR).mkdir(parents=True, exist_ok=True)
+        Path(config.LOCAL_CLIPS_DIR).mkdir(parents=True, exist_ok=True)
 
     def _write_status(self, state, channel):
         """Write live status for the dashboard to read."""
@@ -300,7 +302,7 @@ class PiScannerStation:
             ]
             safe_name = "___".join(p for p in name_parts if p)
             base = f"{ts_str}{suffix}_{safe_name}"
-            clip_dir = os.path.join(config.CLIPS_DIR, date_folder)
+            clip_dir = os.path.join(get_clips_dir(), date_folder)
             os.makedirs(clip_dir, exist_ok=True)
             wav_path = os.path.join(clip_dir, f"{base}.wav")
 
@@ -620,6 +622,9 @@ class PiScannerStation:
         # Start WAV-to-MP3 cleanup worker
         cleanup = threading.Thread(target=self._cleanup_worker, daemon=True)
         cleanup.start()
+
+        # Start NAS sync worker (checks NAS/GPU availability, syncs local clips)
+        self._nas_sync.start()
 
         poller = ScannerPoller(
             self.scanner,

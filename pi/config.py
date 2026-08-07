@@ -71,10 +71,17 @@ WHISPER_PROMPT = (
 # =============================================================================
 # STORAGE
 # =============================================================================
-# Where audio clips are saved.
+# Primary clip storage (NAS when available).
 # For "local" mode: "/home/pi/scanner/clips"
 # For "nas" mode:   "/mnt/nas/clips" (mount your NAS share first)
-CLIPS_DIR = "/home/pi/scanner/clips"
+CLIPS_DIR = "/mnt/nas/clips"
+
+# Local fallback when NAS is unavailable. Clips written here get synced
+# to CLIPS_DIR automatically once NAS comes back online.
+LOCAL_CLIPS_DIR = "/home/pi/scanner/clips"
+
+# How often to check NAS availability (seconds)
+NAS_CHECK_INTERVAL = 15
 
 # Human-readable log file
 LOG_FILE = "/home/pi/scanner/scanner_log.txt"
@@ -85,9 +92,9 @@ DB_PATH = "/home/pi/scanner/scanner.db"
 # =============================================================================
 # GPU SERVER (optional — set DEPLOYMENT_MODE = "gpu" or "nas" to use)
 # =============================================================================
-# IP or hostname of the machine running gpu_transcribe_server.py
-# Leave empty to disable GPU transcription (Pi handles it locally).
-GPU_SERVER_URL = ""  # e.g., "http://192.168.1.100:5555"
+# IP or hostname of the machine running gpu_server.py
+# Used for status display on dashboard and auto-discovery.
+GPU_SERVER_URL = "http://192.168.2.36:5555"
 
 # How often Pi checks if GPU server is online (seconds)
 GPU_CHECK_INTERVAL = 30

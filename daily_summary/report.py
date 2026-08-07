@@ -1,0 +1,208 @@
+"""
+Report generation — assembles channel event summaries and entities into a
+formatted Markdown daily summary file.
+
+Structure:
+  1. Header with date and stats
+  2. Events by Channel (detailed narrative per event)
+  3. Quick Reference tables (plates, names, addresses, phones)
+"""
+
+import os
+from datetime import date
+
+import config
+from entities import extract_entities_from_records
+
+
+def format_report(target_date: date, 
+                  grouped: dict[str, list[dict]],
+                  channel_summaries: dict[str, str],
+                  records: list[dict]) -> str:
+    """
+    Build the full Markdown daily summary report.
+    """
+    entities = extract_entities_from_records(records)
+
+    lines = []
+
+    # --- Header ---
+    day_name = target_date.strftime("%A")
+    lines.append(f"# Scanner Daily Summary — {target_date} ({day_name})")
+    lines.append("")
+    lines.append(f"**Total transmissions:** {len(records)}  ")
+    lines.append(f"**Active channels:** {len(grouped)}  ")
+    lines.append(f"**Plates detected:** {len(entities['plates'])}  ")
+    lines.append(f"**Names detected:** {len(entities['names'])}  ")
+    lines.append(f"**Addresses detected:** {len(entities['addresses'])}  ")
+    lines.append("")
+    lines.append("---")
+    lines.append("")
+
+    # --- Events by Channel ---
+    lines.append("## Events")
+    lines.append("")
+
+    # Sort channels by transmission count (busiest first)
+    sorted_channels = sorted(
+        channel_summaries.keys(),
+        key=lambda k: len(grouped.get(k, [])),
+        reverse=True,
+    )
+
+    for channel_key in sorted_channels:
+        summary = channel_summaries[channel_key]
+        tx_count = len(grouped.get(channel_key, []))
+        lines.append(f"### {channel_key}")
+        lines.append(f"*{tx_count} transmissions*")
+        lines.append("")
+        lines.append(summary)
+        lines.append("")
+        lines.append("---")
+        lines.append("")
+
+    # --- Quick Reference: Plates ---
+    lines.append("## Quick Reference")
+    lines.append("")
+    lines.append("### License Plates")
+    lines.append("")
+    if entities["plates"]:
+        lines.append("| Time | Channel | Plate | Context |")
+        lines.append("|------|---------|-------|---------|")
+        seen_plates = set()
+        for p in entities["plates"]:
+            dedup_key = (p["time"], p["plate"])
+            if dedup_key in seen_plates:
+                continue
+            seen_plates.add(dedup_key)
+            context = p["context"][:60].replace("|", "/")
+            lines.append(f"| {p['time']} | {p['channel'][:25]} | **{p['plate']}** | {context} |")
+        lines.append("")
+    else:
+        lines.append("*No license plates detected today.*")
+        lines.append("")
+
+    # --- Quick Reference: Names ---
+    lines.append("### Names Mentioned")
+    lines.append("")
+    if entities["names"]:
+        lines.append("| Time | Channel | Name | Context |")
+        lines.append("|------|---------|------|---------|")
+        seen_names = set()
+        for n in entities["names"]:
+            dedup_key = (n["time"], n["name"])
+            if dedup_key in seen_names:
+                continue
+            seen_names.add(dedup_key)
+            context = n["context"][:60].replace("|", "/")
+            lines.append(f"| {n['time']} | {n['channel'][:25]} | **{n['name']}** | {context} |")
+        lines.append("")
+    else:
+        lines.append("*No names detected today.*")
+        lines.append("")
+
+    # --- Quick Reference: Addresses ---
+    lines.append("### Addresses Mentioned")
+    lines.append("")
+    if entities["addresses"]:
+        lines.append("| Time | Channel | Address | Context |")
+        lines.append("|------|---------|---------|---------|")
+        seen_addrs = set()
+        for a in entities["addresses"]:
+            dedup_key = (a["time"], a["address"])
+            if dedup_key in seen_addrs:
+                continue
+            seen_addrs.add(dedup_key)
+            context = a["context"][:60].replace("|", "/")
+            lines.append(f"| {a['time']} | {a['channel'][:25]} | {a['address']} | {context} |")
+        lines.append("")
+    else:
+        lines.append("*No addresses detected today.*")
+        lines.append("")
+
+    # --- Quick Reference: Phones ---
+    if entities["phones"]:
+        lines.append("### Phone Numbers")
+        lines.append("")
+        lines.append("| Time | Channel | Phone | Context |")
+        lines.append("|------|---------|-------|---------|")
+        seen_phones = set()
+        for p in entities["phones"]:
+            dedup_key = (p["time"], p["phone"])
+            if dedup_key in seen_phones:
+                continue
+            seen_phones.add(dedup_key)
+            context = p["context"][:60].replace("|", "/")
+            lines.append(f"| {p['time']} | {p['channel'][:25]} | {p['phone']} | {context} |")
+        lines.append("")
+
+    # --- Footer ---
+    lines.append("---")
+    lines.append(f"*Generated by Scanner Daily Summary Server*")
+
+    return "\n".join(lines)
+
+
+def write_report(target_date: date, content: str) -> str:
+    """Write the summary report to the output directory. Returns the file path."""
+    os.makedirs(config.OUTPUT_DIR, exist_ok=True)
+    filename = f"summary_{target_date}.md"
+    filepath = os.path.join(config.OUTPUT_DIR, filename)
+
+    with open(filepath, "w", encoding="utf-8") as f:
+        f.write(content)
+
+    return filepath
+
+
+def write_transcription_log(target_date: date, records: list[dict]) -> str:
+    """
+    Write raw transcription log for the day, grouped by channel.
+    
+    Format:
+      [System > Group > Channel] (N transmissions)
+      HH:MM:SS  transcript text
+      HH:MM:SS  transcript text
+      ...
+    
+    Grouped by system/group/channel, chronological within each group.
+    Written to TRANSCRIBED_DIR. Returns the file path.
+    """
+    from collections import defaultdict
+
+    os.makedirs(config.TRANSCRIBED_DIR, exist_ok=True)
+    filename = f"transcribed_{target_date}.txt"
+    filepath = os.path.join(config.TRANSCRIBED_DIR, filename)
+
+    # Group records by channel key
+    grouped = defaultdict(list)
+    for r in records:
+        system = r.get("system", "").strip()
+        group = r.get("group", "").strip()
+        channel = r.get("channel", "").strip()
+        parts = [p for p in [system, group, channel] if p]
+        key = " > ".join(parts) if parts else "(Unknown)"
+        grouped[key].append(r)
+
+    with open(filepath, "w", encoding="utf-8") as f:
+        f.write(f"Scanner Transcription Log — {target_date}\n")
+        f.write(f"{'=' * 70}\n")
+        f.write(f"Total: {len(records)} transmissions across {len(grouped)} channels\n")
+        f.write(f"{'=' * 70}\n\n")
+
+        # Sort channels by count (busiest first)
+        for channel_key in sorted(grouped.keys(), key=lambda k: -len(grouped[k])):
+            txs = grouped[channel_key]
+            f.write(f"[{channel_key}] ({len(txs)})\n")
+            f.write(f"{'-' * 70}\n")
+
+            for r in txs:
+                time_str = r.get("time", "")
+                if "T" in time_str:
+                    time_str = time_str.split("T")[1][:8]
+                text = r.get("text", "").strip().replace("\n", " ")
+                f.write(f"  {time_str}  {text}\n")
+
+            f.write("\n")
+
+    return filepath

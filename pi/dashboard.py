@@ -24,6 +24,14 @@ import scanner_db
 
 app = Flask(__name__)
 
+# Start NAS/GPU availability checker in the dashboard process too
+try:
+    from nas_sync import NasSyncWorker
+    _dashboard_sync = NasSyncWorker()
+    _dashboard_sync.start()
+except Exception:
+    pass
+
 # Text decoders for inline decoding when GPU posts results
 try:
     from codes import decode_for
@@ -120,6 +128,14 @@ def _enrich_results(results, query=""):
             text = pat.sub(lambda m: f'<span class="hl">{m.group()}</span>', text)
         r["text_hl"] = text
         r["decoded_display"] = _build_decoded_display(r)
+        # Transcription source chip
+        tb = r.get("transcribed_by", "")
+        if tb == "gpu":
+            r["src_chip"] = '<span class="tx-src src-gpu">GPU</span>'
+        elif tb and r.get("transcribed") and text and text not in ("Transcribing...", "Transcribing now", "(audio not found)", "(no speech)", "[BLANK_AUDIO]"):
+            r["src_chip"] = '<span class="tx-src src-pi">Pi</span>'
+        else:
+            r["src_chip"] = ""
     return results
 
 
@@ -189,6 +205,13 @@ tr:hover{background:#1a2744}
 .empty{text-align:center;padding:30px;color:#666}
 .blank{color:#555;font-style:italic}
 .transcribing{color:#ffb74d;font-style:italic}
+.conn-flags{display:inline-flex;gap:4px;margin-left:4px}
+.conn-flag{padding:1px 5px;border-radius:3px;font-size:9px;font-weight:bold;letter-spacing:0.5px}
+.conn-flag.on{background:#2e7d32;color:#fff}
+.conn-flag.off{background:#555;color:#999}
+.tx-src{display:inline-block;padding:0 4px;border-radius:2px;font-size:9px;font-weight:bold;margin-left:5px;vertical-align:middle;float:right}
+.tx-src.src-gpu{background:#1565c0;color:#fff}
+.tx-src.src-pi{background:#6a1b9a;color:#fff}
 .pagination-nav{display:flex;gap:8px;align-items:center;font-size:13px;margin-left:10px}
 .pagination-nav a.prev-btn,.pagination-nav a.next-btn{color:#4fc3f7;text-decoration:none;padding:2px 8px;border:1px solid #4fc3f7;border-radius:4px;font-size:11px;transition:all 0.2s}
 .pagination-nav a.prev-btn:hover,.pagination-nav a.next-btn:hover{background:#4fc3f7;color:#111}
@@ -209,6 +232,7 @@ table{font-size:11px}
 <span><b id="sys-temp">--</b>&deg;C</span>
 <span>Queue: <b id="status-queue">{{ pending }}</b></span>
 <span>Records: <b>{{ total }}</b></span>
+<span class="conn-flags"><span id="flag-gpu" class="conn-flag off" title="GPU Server">GPU</span><span id="flag-nas" class="conn-flag off" title="NAS Storage">NAS</span></span>
 {% if total > end_rec - start_rec + 1 or total_pages > 1 %}<span>Showing {{ start_rec }}–{{ end_rec }}</span>{% endif %}
 {% if total_pages > 1 %}
 <span class="pagination-nav">
@@ -299,8 +323,7 @@ HTML += """<form class="controls" method="GET" id="filter-form">
 <tr>
 <td class="col-time" data-col="time">{{ r.time[5:19] }}</td>
 <td class="col-text" data-col="text">
-{% if r.clip %}<button class="play-btn" data-audio="{{ r.clip }}" title="Play"><span class="play-icon">&#9654;</span></button>{% endif %}
-{% if r.text == 'Transcribing...' %}<span class="transcribing">Transcribing... [{{ r.queue_pos }}]</span>{% elif r.text == 'Transcribing now' %}<span class="transcribing" style="color:#4fc3f7">Transcribing now</span>{% elif r.text and r.text not in ('[BLANK_AUDIO]', '(no speech)') %}{{ r.text_hl|safe }}{% elif r.text == '[BLANK_AUDIO]' %}<span class="blank">blank</span>{% else %}<span class="blank">-</span>{% endif %}
+{% if r.clip %}<button class="play-btn" data-audio="{{ r.clip }}" title="Play"><span class="play-icon">&#9654;</span></button>{% endif %}{% if r.text == 'Transcribing...' %}<span class="transcribing">Transcribing... [{{ r.queue_pos }}]</span>{% elif r.text == 'Transcribing now' %}<span class="transcribing" style="color:#4fc3f7">Transcribing now</span>{% elif r.text and r.text not in ('[BLANK_AUDIO]', '(no speech)') %}{{ r.text_hl|safe }}{% elif r.text == '[BLANK_AUDIO]' %}<span class="blank">blank</span>{% else %}<span class="blank">-</span>{% endif %}{{ r.src_chip|safe }}
 </td>
 <td class="col-decoded" data-col="decoded">{{ r.decoded_display|safe }}</td>
 <td class="col-dur" data-col="dur">{{ r.duration_sec }}s</td>
@@ -469,7 +492,7 @@ document.addEventListener('click', function(e) {
     const btn = e.target.closest('.play-btn');
     if (btn) { e.stopPropagation(); if (currentButton === btn) { stopAudio(); return; } stopAudio(); btn.classList.add('playing'); btn.querySelector('.play-icon').textContent = '\u23f8'; currentButton = btn; currentAudio = new Audio('/audio/' + encodeURIComponent(btn.dataset.audio)); currentAudio.addEventListener('ended', stopAudio); currentAudio.play(); }
 });
-function updateSysinfo() { fetch('/api/sysinfo').then(r => r.json()).then(d => { document.getElementById('sys-cpu').textContent = d.cpu; document.getElementById('sys-ram').textContent = d.ram; document.getElementById('sys-temp').textContent = d.temp; }).catch(() => {}); }
+function updateSysinfo() { fetch('/api/sysinfo').then(r => r.json()).then(d => { document.getElementById('sys-cpu').textContent = d.cpu; document.getElementById('sys-ram').textContent = d.ram; document.getElementById('sys-temp').textContent = d.temp; var gf=document.getElementById('flag-gpu'); if(gf){gf.className='conn-flag '+(d.gpu?'on':'off');} var nf=document.getElementById('flag-nas'); if(nf){nf.className='conn-flag '+(d.nas?'on':'off'); nf.title=d.nas?'NAS Online':'NAS Offline'+(d.nas_pending?' ('+d.nas_pending+' pending)':'');} }).catch(() => {}); }
 updateSysinfo();
 setInterval(updateSysinfo, 3000);
 setInterval(updateScreen, 2000);
@@ -662,8 +685,7 @@ ROW_TEMPLATE = """{% for r in results %}
 <tr>
 <td class="col-time" data-col="time">{{ r.time[5:19] }}</td>
 <td class="col-text" data-col="text">
-{% if r.clip %}<button class="play-btn" data-audio="{{ r.clip }}" title="Play"><span class="play-icon">&#9654;</span></button>{% endif %}
-{% if r.text == 'Transcribing...' %}<span class="transcribing">Transcribing... [{{ r.queue_pos }}]</span>{% elif r.text == 'Transcribing now' %}<span class="transcribing" style="color:#4fc3f7">Transcribing now</span>{% elif r.text and r.text not in ('[BLANK_AUDIO]', '(no speech)') %}{{ r.text_hl|safe }}{% elif r.text == '[BLANK_AUDIO]' %}<span class="blank">blank</span>{% else %}<span class="blank">-</span>{% endif %}
+{% if r.clip %}<button class="play-btn" data-audio="{{ r.clip }}" title="Play"><span class="play-icon">&#9654;</span></button>{% endif %}{% if r.text == 'Transcribing...' %}<span class="transcribing">Transcribing... [{{ r.queue_pos }}]</span>{% elif r.text == 'Transcribing now' %}<span class="transcribing" style="color:#4fc3f7">Transcribing now</span>{% elif r.text and r.text not in ('[BLANK_AUDIO]', '(no speech)') %}{{ r.text_hl|safe }}{% elif r.text == '[BLANK_AUDIO]' %}<span class="blank">blank</span>{% else %}<span class="blank">-</span>{% endif %}{{ r.src_chip|safe }}
 </td>
 <td class="col-decoded" data-col="decoded">{{ r.decoded_display|safe }}</td>
 <td class="col-dur" data-col="dur">{{ r.duration_sec }}s</td>
@@ -844,7 +866,18 @@ def api_sysinfo():
             temp = round(int(f.read().strip()) / 1000, 1)
     except Exception:
         temp = 0
-    return jsonify({"cpu": cpu, "ram": ram, "temp": temp})
+    # NAS and GPU availability from nas_sync module
+    try:
+        from nas_sync import nas_available, gpu_available, sync_pending
+        nas = nas_available()
+        gpu = gpu_available()
+        nas_pending = sync_pending()
+    except Exception:
+        nas = False
+        gpu = False
+        nas_pending = 0
+    return jsonify({"cpu": cpu, "ram": ram, "temp": temp,
+                    "nas": nas, "gpu": gpu, "nas_pending": nas_pending})
 
 
 @app.route("/audio/<path:audio_path>")
@@ -875,6 +908,53 @@ def serve_audio(audio_path):
         )
     except Exception as e:
         return f"Error serving audio: {str(e)}", 500
+
+
+@app.route("/api/day_transmissions")
+def api_day_transmissions():
+    """Return all transcribed transmissions for a given date as raw JSON.
+    
+    Used by the daily summary server on the GPU PC.
+    Query params:
+        date: YYYY-MM-DD (defaults to today)
+        hide_blank: 1 to skip blank/no-speech records (default 1)
+    """
+    from datetime import date as date_type, timedelta
+    date_str = request.args.get("date", "")
+    hide_blank = request.args.get("hide_blank", "1") == "1"
+    
+    if date_str:
+        try:
+            target = date_type.fromisoformat(date_str)
+        except ValueError:
+            return jsonify({"error": "invalid date format, use YYYY-MM-DD"}), 400
+    else:
+        target = date_type.today()
+    
+    start = f"{target}T00:00:00"
+    end = f"{target + timedelta(days=1)}T00:00:00"
+    
+    with scanner_db.get_db() as conn:
+        conditions = ["time >= ?", "time < ?", "transcribed = 1"]
+        params = [start, end]
+        
+        if hide_blank:
+            conditions.append("text NOT IN ('', '(no speech)', '[BLANK_AUDIO]')")
+        
+        where = "WHERE " + " AND ".join(conditions)
+        rows = conn.execute(f"""
+            SELECT * FROM transmissions
+            {where}
+            ORDER BY time ASC
+        """, params).fetchall()
+        
+        records = [scanner_db._row_to_dict(r) for r in rows]
+    
+    return jsonify({
+        "date": str(target),
+        "count": len(records),
+        "records": records,
+    })
 
 
 @app.route("/api/untranscribed")
