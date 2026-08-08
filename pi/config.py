@@ -60,12 +60,23 @@ WHISPER_LANGUAGE = "en"
 
 # Domain vocabulary hint (helps accuracy for scanner traffic)
 WHISPER_PROMPT = (
-    "Show us en route. 10-4, copy. Signal 22, signal 30, 10-42. "
+    "Medic 1, Medic 2, Medic 3, Medic 4, Medic 5, Medic 7, Medic 9, "
+    "Medic 11, Medic 12, Medic 35, Medic 45, Medic 71, Medic 81, Medic 94, Medic 195. "
+    "Engine 1, Engine 2, Engine 3, Engine 4, Engine 5, Engine 11, Engine 181. "
+    "Ladder 1, Ladder 2, Ladder 3. Squad 1, Squad 2, Squad 3. "
+    "Battalion 1, Battalion 2. Unit 1, Unit 2, Unit 3, Unit 4, Unit 5. "
+    "Dispatch, county dispatch. "
+    "Show us en route. Show us on scene. Show me out. Show us clear. "
+    "10-4, copy. 10-8, in service. 10-42, end of shift. "
+    "Signal 22, signal 30, signal 40, signal 43, signal 50. "
+    "Copy that. Be advised. Negative. Affirmative. Roger. Clear. "
+    "Parkview Hospital, Lutheran Hospital. "
+    "EMS, paramedic, ambulance. Sheriff, deputy, trooper. "
+    "Traffic stop, suspect, subject, complainant. "
+    "Vehicle, plate, registration, driver's license, warrant. "
     "Adam Boy Charles David Edward Frank George Henry Ida John King Lincoln "
     "Mary Nora Ocean Paul Queen Robert Sam Tom Union Victor William X-ray Young Zebra. "
-    "Copy that. Show me out. Show us en route. Show us on scene. "
-    "Dispatch, county, sheriff, deputy, unit, squad, engine, medic, "
-    "responding, disregard, reference, complainant, suspect, subject. "
+    "Fort Wayne, Allen County, DeKalb County, Noble County, Indiana. "
 )
 
 # =============================================================================
