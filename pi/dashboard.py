@@ -24,13 +24,12 @@ import scanner_db
 
 app = Flask(__name__)
 
-# Start NAS/GPU availability checker in the dashboard process too
+# Import NAS/GPU status functions (read-only, no worker thread in dashboard)
 try:
-    from nas_sync import NasSyncWorker
-    _dashboard_sync = NasSyncWorker()
-    _dashboard_sync.start()
-except Exception:
-    pass
+    from nas_sync import nas_available, gpu_available, sync_pending
+    _nas_status_available = True
+except ImportError:
+    _nas_status_available = False
 
 # Text decoders for inline decoding when GPU posts results
 try:
@@ -130,9 +129,10 @@ def _enrich_results(results, query=""):
         r["decoded_display"] = _build_decoded_display(r)
         # Transcription source chip
         tb = r.get("transcribed_by", "")
+        raw_text = r.get("text", "")
         if tb == "gpu":
             r["src_chip"] = '<span class="tx-src src-gpu">GPU</span>'
-        elif tb and r.get("transcribed") and text and text not in ("Transcribing...", "Transcribing now", "(audio not found)", "(no speech)", "[BLANK_AUDIO]"):
+        elif r.get("transcribed") and raw_text and raw_text not in ("Transcribing...", "Transcribing now", "(audio not found)", "(no speech)", "[BLANK_AUDIO]", ""):
             r["src_chip"] = '<span class="tx-src src-pi">Pi</span>'
         else:
             r["src_chip"] = ""
@@ -156,7 +156,11 @@ h1{color:#4fc3f7;font-size:1.4em;margin-bottom:8px}
 .stats-bar b{color:#4fc3f7}
 .status{background:#1a2744;padding:10px;border-radius:6px;margin-bottom:10px;font-size:13px;display:flex;gap:15px;flex-wrap:wrap;align-items:flex-start}
 .scanner-screen{background:#001a00;border:2px solid #444;border-radius:6px;padding:8px 12px;font-family:'Courier New',monospace;font-size:12px;color:#33ff33;width:290px;line-height:1.3}
-.screen-title{color:#888;font-size:10px;text-align:center;margin-bottom:4px;font-family:system-ui;border-bottom:1px solid #333;padding-bottom:3px}
+.screen-title{color:#888;font-size:10px;text-align:center;margin-bottom:4px;font-family:system-ui;border-bottom:1px solid #333;padding-bottom:3px;display:flex;justify-content:center;align-items:center;gap:6px}
+.screen-toggle{background:none;border:none;color:#666;cursor:pointer;font-size:12px;padding:0 3px;line-height:1}
+.screen-toggle:hover{color:#4fc3f7}
+.scanner-screen.collapsed{height:auto;min-height:0}
+.scanner-screen.collapsed #screen-content{display:none}
 .screen-header{color:#ffaa00;font-size:10px;margin-bottom:4px;padding-bottom:3px;border-bottom:1px solid #1a3a1a;height:2.6em;overflow:hidden;line-height:1.3}
 .screen-section{padding:3px 0;border-bottom:1px solid #1a3a1a;height:3.9em;overflow:hidden;line-height:1.3}
 .screen-section:last-child{border-bottom:none}
@@ -197,7 +201,7 @@ tr:hover{background:#1a2744}
 .decoded-filters .df-btn{padding:2px 7px;background:transparent;border:1px solid #555;color:#888;border-radius:3px;font-size:10px;cursor:pointer;transition:all .15s}
 .decoded-filters .df-btn:hover{border-color:#4fc3f7;color:#4fc3f7}
 .decoded-filters .df-btn.active{background:#4fc3f7;color:#111;border-color:#4fc3f7}
-.play-btn{background:#2e7d32;color:#fff;border:none;border-radius:3px;padding:2px 5px;margin-right:4px;cursor:pointer;font-size:10px;display:inline-flex;align-items:center;gap:2px;vertical-align:middle}
+.play-btn{background:#2e7d32;color:#fff;border:none;border-radius:3px;padding:2px 5px;margin-left:5px;margin-right:8px;cursor:pointer;font-size:10px;display:inline-flex;align-items:center;gap:2px;vertical-align:middle}
 .play-btn:hover{background:#43a047}
 .play-btn.playing{background:#c62828}
 .play-btn.playing:hover{background:#e53935}
@@ -243,8 +247,8 @@ table{font-size:11px}
 {% endif %}
 </div>
 <div class="status">
-<div class="scanner-screen">
-<div class="screen-title">BCD436HP &mdash; <span id="status-state">{{ status.state }}</span></div>
+<div class="scanner-screen" id="scanner-screen-panel">
+<div class="screen-title">BCD436HP &mdash; <span id="status-state">{{ status.state }}</span> <button id="screen-toggle-btn" class="screen-toggle" title="Toggle screen display">&#x1F5B5;</button></div>
 <div id="screen-content">
 {% if status.screen and status.screen.sections is defined %}
 <div class="screen-header">
@@ -469,6 +473,7 @@ HTML += """<script>
 HTML += """<script>
 // ========== Scanner screen, audio, sysinfo ==========
 function updateScreen() {
+    if (document.getElementById('scanner-screen-panel').classList.contains('collapsed')) return;
     fetch('/api/status')
         .then(r => r.json())
         .then(d => {
@@ -494,8 +499,24 @@ document.addEventListener('click', function(e) {
 });
 function updateSysinfo() { fetch('/api/sysinfo').then(r => r.json()).then(d => { document.getElementById('sys-cpu').textContent = d.cpu; document.getElementById('sys-ram').textContent = d.ram; document.getElementById('sys-temp').textContent = d.temp; var gf=document.getElementById('flag-gpu'); if(gf){gf.className='conn-flag '+(d.gpu?'on':'off');} var nf=document.getElementById('flag-nas'); if(nf){nf.className='conn-flag '+(d.nas?'on':'off'); nf.title=d.nas?'NAS Online':'NAS Offline'+(d.nas_pending?' ('+d.nas_pending+' pending)':'');} }).catch(() => {}); }
 updateSysinfo();
-setInterval(updateSysinfo, 3000);
+setInterval(updateSysinfo, 10000);
 setInterval(updateScreen, 2000);
+
+// Screen toggle
+(function() {
+    var panel = document.getElementById('scanner-screen-panel');
+    var btn = document.getElementById('screen-toggle-btn');
+    // Load initial state
+    fetch('/api/screen_status').then(r=>r.json()).then(d=>{
+        if (!d.screen_enabled) { panel.classList.add('collapsed'); btn.title='Show screen'; }
+    }).catch(()=>{});
+    btn.addEventListener('click', function() {
+        fetch('/api/screen_toggle', {method:'POST'}).then(r=>r.json()).then(d=>{
+            if (d.screen_enabled) { panel.classList.remove('collapsed'); btn.title='Hide screen'; updateScreen(); }
+            else { panel.classList.add('collapsed'); btn.title='Show screen'; }
+        }).catch(()=>{});
+    });
+})();
 
 // ========== AJAX table refresh (no full page reload) ==========
 function refreshTable() {
@@ -808,6 +829,37 @@ def api_filter_options():
     return jsonify(opts)
 
 
+@app.route("/api/screen_toggle", methods=["POST"])
+def api_screen_toggle():
+    """Toggle the scanner screen display on/off. Stops STS serial polling when off."""
+    screen_file = "/home/pi/scanner/screen_enabled"
+    try:
+        # Read current state
+        try:
+            with open(screen_file, "r") as f:
+                current = f.read().strip() != "0"
+        except (OSError, IOError):
+            current = True
+        # Toggle
+        new_state = not current
+        with open(screen_file, "w") as f:
+            f.write("1" if new_state else "0")
+        return jsonify({"screen_enabled": new_state})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/screen_status")
+def api_screen_status():
+    """Get current screen display state."""
+    try:
+        with open("/home/pi/scanner/screen_enabled", "r") as f:
+            enabled = f.read().strip() != "0"
+    except (OSError, IOError):
+        enabled = True
+    return jsonify({"screen_enabled": enabled})
+
+
 @app.route("/api/status")
 def api_status():
     data = _load_status()
@@ -866,18 +918,41 @@ def api_sysinfo():
             temp = round(int(f.read().strip()) / 1000, 1)
     except Exception:
         temp = 0
-    # NAS and GPU availability from nas_sync module
+    # NAS and GPU availability (cached, only pings GPU every 30s)
     try:
-        from nas_sync import nas_available, gpu_available, sync_pending
-        nas = nas_available()
-        gpu = gpu_available()
-        nas_pending = sync_pending()
+        import os
+        nas = os.path.ismount("/mnt/nas")
     except Exception:
         nas = False
-        gpu = False
-        nas_pending = 0
+    gpu = _cached_gpu_check()
+    nas_pending = 0
     return jsonify({"cpu": cpu, "ram": ram, "temp": temp,
                     "nas": nas, "gpu": gpu, "nas_pending": nas_pending})
+
+
+# GPU check cache (avoid hammering the GPU server every 3s)
+_gpu_cache = {"value": False, "last_check": 0}
+
+
+def _cached_gpu_check() -> bool:
+    """Check GPU server availability, cached for 30 seconds."""
+    import time
+    now = time.time()
+    if now - _gpu_cache["last_check"] < 30:
+        return _gpu_cache["value"]
+    _gpu_cache["last_check"] = now
+    try:
+        import urllib.request
+        gpu_url = getattr(__import__('config'), 'GPU_SERVER_URL', '')
+        if gpu_url:
+            req = urllib.request.Request(f"{gpu_url}/status", method="GET")
+            with urllib.request.urlopen(req, timeout=2) as resp:
+                _gpu_cache["value"] = resp.status == 200
+        else:
+            _gpu_cache["value"] = False
+    except Exception:
+        _gpu_cache["value"] = False
+    return _gpu_cache["value"]
 
 
 @app.route("/audio/<path:audio_path>")

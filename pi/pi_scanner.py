@@ -44,7 +44,7 @@ from codes import decode_for
 from phonetic import decode_plates
 from phone import detect_phones, format_phones
 import scanner_db
-from nas_sync import NasSyncWorker, get_clips_dir
+from nas_sync import get_clips_dir
 from audio_health import AudioHealthMonitor, find_usb_audio_device
 
 
@@ -103,14 +103,14 @@ class PiScannerStation:
         self._active_system_name = ""
         self._stop = threading.Event()
         self._transcriber = None
-        self._nas_sync = NasSyncWorker()
+        self._screen_enabled = self._load_screen_setting()
 
         Path(config.LOCAL_CLIPS_DIR).mkdir(parents=True, exist_ok=True)
 
     def _write_status(self, state, channel):
         """Write live status for the dashboard to read."""
-        # Also grab the LCD screen via STS
-        screen_lines = self._get_screen()
+        # Only query STS if screen display is enabled
+        screen_lines = self._get_screen() if self._screen_enabled else []
 
         status = {
             "state": state,
@@ -127,7 +127,15 @@ class PiScannerStation:
 
     def _on_poll(self, state):
         """Called every poll cycle — update the screen display."""
-        screen_lines = self._get_screen()
+        # Reload screen setting every ~5s (poll runs at 300ms)
+        if not hasattr(self, '_screen_check_counter'):
+            self._screen_check_counter = 0
+        self._screen_check_counter += 1
+        if self._screen_check_counter >= 16:
+            self._screen_check_counter = 0
+            self._screen_enabled = self._load_screen_setting()
+
+        screen_lines = self._get_screen() if self._screen_enabled else []
         st = "receiving" if state.active else "scanning"
         status = {
             "state": st,
@@ -149,6 +157,15 @@ class PiScannerStation:
             return self._parse_sts(sts)
         except Exception:
             return []
+
+    @staticmethod
+    def _load_screen_setting() -> bool:
+        """Load screen display setting from file. Defaults to True (on)."""
+        try:
+            with open("/home/pi/scanner/screen_enabled", "r") as f:
+                return f.read().strip() != "0"
+        except (OSError, IOError):
+            return True
 
     @staticmethod
     def _parse_sts(sts_resp):
@@ -636,7 +653,10 @@ class PiScannerStation:
         cleanup = threading.Thread(target=self._cleanup_worker, daemon=True)
         cleanup.start()
 
-        # Start NAS sync worker (checks NAS/GPU availability, syncs local clips)
+        # NAS sync: lightweight worker moves local clips to NAS when available.
+        # No os.walk, no GPU check, processes one file at a time.
+        from nas_sync import NasSyncWorker
+        self._nas_sync = NasSyncWorker()
         self._nas_sync.start()
 
         # Start audio health watchdog

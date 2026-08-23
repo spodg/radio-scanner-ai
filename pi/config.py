@@ -92,7 +92,7 @@ CLIPS_DIR = "/mnt/nas/clips"
 LOCAL_CLIPS_DIR = "/home/pi/scanner/clips"
 
 # How often to check NAS availability (seconds)
-NAS_CHECK_INTERVAL = 15
+NAS_CHECK_INTERVAL = 30
 
 # Human-readable log file
 LOG_FILE = "/home/pi/scanner/scanner_log.txt"
