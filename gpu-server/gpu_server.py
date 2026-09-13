@@ -57,28 +57,84 @@ WHISPER_COMPUTE_TYPE = os.environ.get("WHISPER_COMPUTE_TYPE", "float32")
 WHISPER_LANGUAGE = "en"
 WHISPER_SILENCE_RMS = 0.0015
 WHISPER_PROMPT = (
-    "Show us en route. 10-4, copy. Signal 22, signal 30, 10-42. "
+    # Unit designators (most common misrecognition source)
+    "Medic 1, Medic 2, Medic 3, Medic 4, Medic 5, Medic 7, Medic 8, Medic 9, "
+    "Medic 11, Medic 12, Medic 15, Medic 21, Medic 25, Medic 35, Medic 45, "
+    "Medic 71, Medic 81, Medic 94, Medic 95, Medic 108, Medic 115, Medic 135, Medic 195. "
+    "Engine 1, Engine 2, Engine 3, Engine 4, Engine 5, Engine 7, Engine 8, Engine 9, "
+    "Engine 11, Engine 12, Engine 15, Engine 181. "
+    "Ladder 1, Ladder 2, Ladder 3, Ladder 7. "
+    "Squad 1, Squad 2, Squad 3, Squad 4, Squad 5. "
+    "Battalion 1, Battalion 2, Battalion 3. "
+    "Unit 1, Unit 2, Unit 3, Unit 4, Unit 5, Unit 6, Unit 7, Unit 8. "
+    "Rescue 1, Rescue 2, Rescue 3. "
+    "6 is en route. 20 is en route. 35 is en route. 45 is en route. "
+    "6, clear. 20, clear. 35, clear. Show me en route. Show me on scene. "
+    "Dispatch, county dispatch, city dispatch. "
+    "Show us en route. Show us on scene. Show me out. Show us clear. "
+    "10-4, copy. 10-8, in service. 10-42, end of shift. 10-76, en route. "
+    "Signal 22, signal 30, signal 40, signal 43, signal 46, signal 50, signal 75. "
+    "Copy that. Be advised. Negative. Affirmative. Roger. Clear. "
+    "Emergency run. Stat transfer. Priority 1. Code 3. "
+    "Parkview Hospital, Lutheran Hospital, Dupont Hospital. "
+    "Parkview North, Parkview South, Parkview Randallia, Parkview Whitley. "
+    "Patient, chest pain, difficulty breathing, cardiac arrest, unresponsive. "
+    "EMS, paramedic, EMT, ambulance, first responders. "
+    "Structure fire, working fire, mutual aid. "
+    "Sheriff, deputy, trooper, officer, sergeant. "
+    "Traffic stop, vehicle pursuit, suspect, subject, complainant. "
+    "Vehicle, plate, registration, driver's license, warrant. "
     "Adam Boy Charles David Edward Frank George Henry Ida John King Lincoln "
     "Mary Nora Ocean Paul Queen Robert Sam Tom Union Victor William X-ray Young Zebra. "
     "Fort Wayne, Allen County, Whitley County, DeKalb County, Noble County, "
-    "Adams County, Wells County, Huntington County, Indiana. "
-    "Coliseum, Coldwater, Lima Road, State Road 3, Interstate 69, US 30, "
+    "Adams County, Wells County, Huntington County, LaGrange County, Steuben County, Indiana. "
+    "Coliseum, Coldwater, Lima Road, State Road 3, State Road 9, "
+    "Interstate 69, Interstate 469, US 30, US 33. "
     "Clinton, Calhoun, Jefferson, Washington, Lafayette, Stellhorn, Dupont, "
-    "Maysville Road, Goshen Road, Bluffton Road, Decatur Road, "
-    "Lutheran Hospital, Parkview, St. Joe Center. "
-    "Copy that. Show me out. Show us en route. Show us on scene. "
-    "Be advised. Negative. Affirmative. Roger. Clear. "
-    "Dispatch, county, sheriff, deputy, unit, squad, engine, medic, "
-    "responding, disregard, reference, complainant, suspect, subject, "
-    "vehicle, plate, registration, driver's license, warrant. "
+    "Maysville Road, Goshen Road, Bluffton Road, Decatur Road. "
+    "Auburn, Garrett, Kendallville, Ligonier, Columbia City, Bluffton, Decatur. "
 )
+
+# Post-processing corrections for consistent Whisper errors on scanner audio.
+# Applied after transcription. Keys are regex patterns (case-insensitive).
+WHISPER_CORRECTIONS = {
+    r"\bmay i agree\b": "Medic 3",
+    r"\bmedic free\b": "Medic 3",
+    r"\bmagic (\d)": r"Medic \1",
+    r"\bengine for\b": "Engine 4",
+    r"\bengine won\b": "Engine 1",
+    r"\bunit won\b": "Unit 1",
+    r"\bunit too\b": "Unit 2",
+    r"\bunit to\b": "Unit 2",
+    r"\bsquad won\b": "Squad 1",
+    r"\bsquad too\b": "Squad 2",
+    r"\bladder won\b": "Ladder 1",
+    r"\bbattalion won\b": "Battalion 1",
+    r"\bshow us in route\b": "show us en route",
+    r"\bin route\b": "en route",
+    r"\bsingle (\d+)": r"signal \1",
+    r"\b10 for\b": "10-4",
+    r"\b10 42\b": "10-42",
+    r"\b10 8\b": "10-8",
+    r"\bpark view\b": "Parkview",
+    r"\bcold water\b": "Coldwater",
+    r"\bwhite cheese and rum\b": "20 is en route",
+    # "one" as unit number (when followed by status/action verbs)
+    r"\bone (have in custody|is en route|is on scene|is clear|is 10-8|show me|, clear|, en route|, on scene)\b": r"1 \1",
+    # Whisper hallucinations (outputs memorized training data on bad audio)
+    r"(?i)closed captioning.*": "",
+    r"(?i)subtitles by the amara\.org community": "",
+    r"(?i)thanks for watching": "",
+    r"(?i)please subscribe": "",
+    r"(?i)thank you for watching": "",
+}
 
 # Ollama (for summarization)
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
 OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "llama3.1:8b")
 
 # Timing
-POLL_INTERVAL = 3        # seconds between fresh transcription polls
+POLL_INTERVAL = 5        # seconds between fresh transcription polls
 RETRANS_INTERVAL = 0     # no delay between re-transcription batches
 PIPELINE_CHECK = 60      # seconds between day-completion checks
 BATCH_SIZE = 10          # max fresh items per poll cycle
@@ -167,15 +223,59 @@ class Transcriber:
         )
         parts = []
         for seg in segments:
-            if seg.no_speech_prob > 0.5 or seg.avg_logprob < -0.7:
+            if seg.no_speech_prob > 0.5 or seg.avg_logprob < -1.0:
                 continue
             parts.append(seg.text.strip())
-        return " ".join(parts).strip()
+        text = " ".join(parts).strip()
+
+        # Apply post-processing corrections
+        if text and WHISPER_CORRECTIONS:
+            import re
+            for pattern, replacement in WHISPER_CORRECTIONS.items():
+                text = re.sub(pattern, replacement, text, flags=re.IGNORECASE)
+
+        return text
 
 
 # ===========================================================================
 # Audio Loading
 # ===========================================================================
+_CLIP_CACHE_DIR = os.path.join(os.environ.get("TEMP", r"C:\Temp"), "scanner_clips")
+
+
+def _fetch_clip_from_pi(clip_path: str) -> str:
+    """
+    Fetch a clip from the Pi via HTTP when it's stored locally on the Pi
+    (not on NAS). Downloads to a temp cache directory.
+    Returns local path to the downloaded file, or None on failure.
+    """
+    import urllib.parse
+    os.makedirs(_CLIP_CACHE_DIR, exist_ok=True)
+
+    # Build URL: Pi dashboard serves clips at /audio/<path>
+    encoded = urllib.parse.quote(clip_path, safe="")
+    url = f"{_pi_url()}/audio/{encoded}"
+
+    # Use filename as cache key
+    filename = os.path.basename(clip_path)
+    local_path = os.path.join(_CLIP_CACHE_DIR, filename)
+
+    # Skip if already cached
+    if os.path.exists(local_path) and os.path.getsize(local_path) > 100:
+        return local_path
+
+    try:
+        r = requests.get(url, timeout=15)
+        if r.status_code == 200 and len(r.content) > 100:
+            with open(local_path, "wb") as f:
+                f.write(r.content)
+            return local_path
+    except Exception:
+        pass
+
+    return None
+
+
 def load_audio(clip_path: str) -> np.ndarray:
     """Load WAV/MP3, return mono float32 at 16kHz."""
     # Map Pi Linux path to Windows UNC
@@ -194,6 +294,14 @@ def load_audio(clip_path: str) -> np.ndarray:
             if os.path.exists(mp3):
                 clip_path = mp3
             else:
+                # Try fetching from Pi via HTTP
+                clip_path = _fetch_clip_from_pi(clip_path) or ""
+                if not clip_path:
+                    return np.zeros(0, dtype=np.float32)
+        elif clip_path:
+            # Not on local/NAS — try Pi HTTP
+            clip_path = _fetch_clip_from_pi(clip_path) or ""
+            if not clip_path:
                 return np.zeros(0, dtype=np.float32)
         else:
             return np.zeros(0, dtype=np.float32)
@@ -329,8 +437,12 @@ def is_day_fully_gpu_transcribed(records: list[dict]) -> bool:
     
     A record counts as 'done' if:
       - transcribed_by == 'gpu', OR
-      - text is empty/blank (silence clips that neither Pi nor GPU could transcribe)
+      - text is empty/blank (silence clips that neither Pi nor GPU could transcribe), OR
+      - text is an error message (audio not found, etc.) that can't be re-transcribed
     """
+    # Error texts that indicate a permanently un-transcribable record
+    ERROR_TEXTS = {"(audio not found)", "(no speech)", "[BLANK_AUDIO]", ""}
+
     if not records:
         return False
     for r in records:
@@ -339,8 +451,8 @@ def is_day_fully_gpu_transcribed(records: list[dict]) -> bool:
         # GPU-transcribed: done
         if tb == "gpu":
             continue
-        # Empty text with no transcriber: silence/blank clip, count as done
-        if not text and not tb:
+        # Empty/error text with no transcriber: can't be improved, count as done
+        if not tb and (not text or text in ERROR_TEXTS):
             continue
         # Pi-transcribed with actual text: needs GPU re-transcription
         return False
@@ -506,27 +618,120 @@ def generate_daily_summary(target_date: date, records: list[dict]) -> str:
     return filepath
 
 
+# --- Name/address regex extraction (addresses aren't in decoded_text) -------
+_NAME_PATTERNS = [
+    r"registered\s+(?:to|owner)\s+([A-Z][a-z]{2,}(?:\s+[A-Z][a-z]{2,}){1,2})",
+    r"(?:RP|complainant|reporting party)\s+(?:is\s+)?([A-Z][a-z]{2,}(?:\s+[A-Z][a-z]{2,}){1,2})",
+    r"(?:subject|suspect|driver|passenger)\s+(?:is\s+)?([A-Z][a-z]{2,}(?:\s+[A-Z][a-z]{2,}){1,2})",
+    r"(?:resident|homeowner|victim)\s+(?:is\s+)?([A-Z][a-z]{2,}(?:\s+[A-Z][a-z]{2,}){1,2})",
+    r"lives?\s+(?:at|with)\s+([A-Z][a-z]{2,}(?:\s+[A-Z][a-z]{2,}){1,2})",
+]
+
+_ADDRESS_PATTERNS = [
+    r"(?:at|address\s+(?:is|of)?|location\s*:?|responding\s+to|en\s+route\s+to|"
+    r"headed\s+to|going\s+to)\s+"
+    r"(\d+\s+(?:block\s+(?:of\s+)?)?(?:(?:North|South|East|West|N|S|E|W)\.?\s+)?"
+    r"[A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,3}"
+    r"(?:\s+(?:Street|St|Road|Rd|Avenue|Ave|Boulevard|Blvd|Drive|Dr|Lane|Ln|"
+    r"Court|Ct|Way|Place|Pl|Circle|Cir|Parkway|Pkwy|Trail|Terrace|Pike)\.?)?)",
+    r",\s+(\d+\s+(?:(?:North|South|East|West|N|S|E|W)\.?\s+)?"
+    r"[A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2}\s+"
+    r"(?:Street|St|Road|Rd|Avenue|Ave|Boulevard|Blvd|Drive|Dr|Lane|Ln|"
+    r"Court|Ct|Way|Place|Pl|Circle|Cir|Parkway|Pkwy|Trail|Terrace|Pike)\.?)",
+    r"(?:at|near)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?\s+and\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)",
+]
+
+_NOT_NAMES = {
+    "Adam", "Boy", "Charles", "David", "Edward", "Frank", "George", "Henry",
+    "Ida", "John", "King", "Lincoln", "Mary", "Nora", "Ocean", "Paul",
+    "Queen", "Robert", "Sam", "Tom", "Union", "Victor", "William", "Young",
+    "Zebra", "Alpha", "Bravo", "Charlie", "Delta", "Echo", "Foxtrot", "Golf",
+    "Hotel", "India", "Juliet", "Kilo", "Lima", "Mike", "November", "Oscar",
+    "Papa", "Quebec", "Romeo", "Sierra", "Tango", "Uniform", "Whiskey",
+    "Yankee", "Zulu", "Signal", "Copy", "Clear", "Roger", "Dispatch",
+    "County", "Allen", "Noble", "Fort", "Wayne", "Indiana",
+    "North", "South", "East", "West",
+}
+
+
+def _extract_names(text: str) -> list:
+    """Extract person names from a transcript via regex."""
+    if not text:
+        return []
+    import re
+    out = []
+    for pattern in _NAME_PATTERNS:
+        for m in re.finditer(pattern, text, re.IGNORECASE):
+            name = " ".join(w.capitalize() for w in m.group(1).strip().split())
+            parts = name.split()
+            if len(parts) < 2:
+                continue
+            if parts[0] in _NOT_NAMES and parts[1] in _NOT_NAMES:
+                continue
+            out.append(name)
+    return list(dict.fromkeys(out))  # dedupe, preserve order
+
+
+def _extract_addresses(text: str) -> list:
+    """Extract street addresses from a transcript via regex."""
+    if not text:
+        return []
+    import re
+    out = []
+    for pattern in _ADDRESS_PATTERNS:
+        for m in re.finditer(pattern, text, re.IGNORECASE):
+            addr = m.group(1).strip()
+            if len(addr) > 8:
+                out.append(addr)
+    return list(dict.fromkeys(out))
+
+
 def _write_summary_report(filepath, target_date, grouped, channel_summaries, records):
     """Write the final markdown summary report."""
-    # Simple entity extraction for quick reference
+    # Entity extraction for quick reference:
+    #  - plates/phones from decoded_text (already decoded)
+    #  - names/addresses via regex from transcript text
     plates, names, addresses, phones = [], [], [], []
     for r in records:
         dt = r.get("decoded_text", {}) or {}
         t = r.get("time", "")
         ts = t.split("T")[1][:5] if "T" in t else t
         ch = r.get("channel", "") or r.get("group", "")
-        ctx = r.get("text", "")[:60].replace("|", "/")
+        text = r.get("text", "")
+        ctx = text[:60].replace("|", "/")
         for p in dt.get("plates", []):
             plates.append(f"| {ts} | {ch[:25]} | **{p}** | {ctx} |")
         for p in dt.get("phones", []):
             phones.append(f"| {ts} | {ch[:25]} | {p} | {ctx} |")
+        for nm in _extract_names(text):
+            names.append(f"| {ts} | {ch[:25]} | **{nm}** | {ctx} |")
+        for addr in _extract_addresses(text):
+            addresses.append(f"| {ts} | {ch[:25]} | {addr} | {ctx} |")
+
+    def _write_table(f, title, rows, header):
+        f.write(f"### {title}\n\n")
+        if rows:
+            f.write(header + "\n")
+            # Separator: one "---" per column (columns = pipes - 1)
+            ncols = header.count("|") - 1
+            f.write("|" + "------|" * ncols + "\n")
+            seen = set()
+            for line in rows:
+                if line not in seen:
+                    seen.add(line)
+                    f.write(line + "\n")
+            f.write("\n")
+        else:
+            f.write(f"*None detected.*\n\n")
 
     day_name = target_date.strftime("%A")
     with open(filepath, "w", encoding="utf-8") as f:
         f.write(f"# Scanner Daily Summary — {target_date} ({day_name})\n\n")
         f.write(f"**Total transmissions:** {len(records)}  \n")
         f.write(f"**Active channels:** {len(grouped)}  \n")
-        f.write(f"**Plates detected:** {len(plates)}  \n\n---\n\n")
+        f.write(f"**Plates detected:** {len(plates)}  \n")
+        f.write(f"**Names detected:** {len(names)}  \n")
+        f.write(f"**Addresses detected:** {len(addresses)}  \n\n---\n\n")
         f.write("## Events\n\n")
 
         # Busiest channels first
@@ -537,29 +742,10 @@ def _write_summary_report(filepath, target_date, grouped, channel_summaries, rec
 
         # Quick Reference
         f.write("## Quick Reference\n\n")
-        f.write("### License Plates\n\n")
-        if plates:
-            f.write("| Time | Channel | Plate | Context |\n")
-            f.write("|------|---------|-------|---------||\n")
-            seen = set()
-            for line in plates:
-                if line not in seen:
-                    seen.add(line)
-                    f.write(line + "\n")
-            f.write("\n")
-        else:
-            f.write("*No plates detected.*\n\n")
-
-        if phones:
-            f.write("### Phone Numbers\n\n")
-            f.write("| Time | Channel | Phone | Context |\n")
-            f.write("|------|---------|-------|---------||\n")
-            seen = set()
-            for line in phones:
-                if line not in seen:
-                    seen.add(line)
-                    f.write(line + "\n")
-            f.write("\n")
+        _write_table(f, "License Plates", plates, "| Time | Channel | Plate | Context |")
+        _write_table(f, "Names Mentioned", names, "| Time | Channel | Name | Context |")
+        _write_table(f, "Addresses Mentioned", addresses, "| Time | Channel | Address | Context |")
+        _write_table(f, "Phone Numbers", phones, "| Time | Channel | Phone | Context |")
 
         f.write("---\n*Generated by GPU Server Pipeline*\n")
 
@@ -579,10 +765,13 @@ class Pipeline:
         self._last_check = 0
         self._days_in_progress = set()  # days we've already attempted
 
-    def check(self):
+    def check(self, allow_summary: bool = True):
         """
-        Called during idle periods (no transcription work).
         Checks if any past days need transcribed logs or summaries.
+        
+        allow_summary: if False, only writes transcription logs (cheap) and
+        skips Ollama summarization (expensive, competes with Whisper for GPU).
+        Set False when the re-transcription queue is still busy.
         """
         now = time.time()
         if now - self._last_check < PIPELINE_CHECK:
@@ -598,7 +787,7 @@ class Pipeline:
             if is_day_transcribed(d) and is_day_summarized(d):
                 empty_streak = 0
                 continue
-            result = self._process_day(d)
+            result = self._process_day(d, allow_summary=allow_summary)
             if result == "no_data":
                 empty_streak += 1
                 if empty_streak >= 3:
@@ -606,7 +795,7 @@ class Pipeline:
             else:
                 empty_streak = 0
 
-    def _process_day(self, d: date):
+    def _process_day(self, d: date, allow_summary: bool = True):
         """Check and process a single day through the pipeline. Returns status string."""
         # Step 1: Is transcribed log already written?
         if not is_day_transcribed(d):
@@ -630,6 +819,9 @@ class Pipeline:
 
         # Step 2: Transcribed log exists. Does summary exist?
         if not is_day_summarized(d):
+            # Defer summarization when retrans is busy (Ollama competes with Whisper)
+            if not allow_summary:
+                return "log_only"
             # Verify Ollama is running before attempting summarization
             try:
                 r = requests.get(f"{OLLAMA_URL}/api/tags", timeout=5)
@@ -703,15 +895,15 @@ class Worker:
                 # P2: Re-transcription (one item)
                 did_retrans = self._do_retranscribe()
 
+                # P3+P4: Pipeline checks run on a timer regardless of retrans backlog.
+                # (Previously starved when retrans queue was large — pipeline never ran.)
+                # When retrans is busy, only write transcription logs (cheap); defer
+                # Ollama summaries until retrans is idle to avoid GPU contention.
+                self.pipeline.check(allow_summary=not did_retrans)
+
                 if not did_retrans:
-                    # P3+P4: Pipeline checks (day completion + summarization)
-                    self.stats["state"] = "pipeline"
-                    self.pipeline.check()
-                    self.stats["state"] = "idle"
-                    # Longer sleep when truly idle
                     self._stop.wait(POLL_INTERVAL)
                 else:
-                    # Brief pause between retrans batches
                     self._stop.wait(RETRANS_INTERVAL)
 
             except Exception as e:
@@ -726,6 +918,8 @@ class Worker:
             return False
 
         self.stats["state"] = "transcribing (fresh)"
+        count_before = self.stats["fresh_transcribed"] + self.stats["errors"]
+
         print(f"[P1:fresh] {len(records)} item(s)")
 
         for record in records:
@@ -733,7 +927,10 @@ class Worker:
                 break
             self._transcribe_one(record, "P1:fresh")
 
-        return True
+        count_after = self.stats["fresh_transcribed"] + self.stats["errors"]
+        # Only report "work done" if we actually processed something
+        # (prevents tight loop when all items are in retry-wait state)
+        return count_after > count_before
 
     def _do_retranscribe(self) -> bool:
         """Re-transcribe a batch of Pi-transcribed items. Returns True if work was done."""
@@ -788,20 +985,19 @@ class Worker:
         ts = record.get("time", "?")
         name = record.get("name", "?")
 
-        if self._failed.get(rid, 0) >= 3:
+        if self._failed.get(rid, 0) >= 2:
+            # Permanently failed — mark as done so it leaves the queue
+            post_result(rid, "(audio not found)", "gpu")
+            print(f"[{tag}] {rid} failed 2x, marking as (audio not found)")
+            del self._failed[rid]
             return
 
         if not clip:
             post_result(rid, "", "gpu")
             return
 
-        # Load audio (retry for NAS sync)
-        audio = np.zeros(0, dtype=np.float32)
-        for _ in range(4):
-            audio = load_audio(clip)
-            if audio.size > 0:
-                break
-            time.sleep(2)
+        # Load audio (single attempt + Pi HTTP fallback, no long retries)
+        audio = load_audio(clip)
 
         if audio.size == 0:
             self._failed[rid] = self._failed.get(rid, 0) + 1
