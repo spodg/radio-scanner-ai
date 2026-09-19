@@ -13,9 +13,9 @@ RestartSec=15
 # Whisper is CPU-heavy but non-critical — throttle aggressively
 Nice=15
 CPUQuota=200%
-# Memory cap: Whisper tiny.en uses ~200MB; cap at 400MB to prevent OOM
-MemoryMax=400M
-MemorySwapMax=100M
+# Memory cap: Whisper tiny.en uses ~200MB; cap at 300MB
+MemoryMax=300M
+MemorySwapMax=50M
 # Expendable: kill this first if system runs out of memory
 OOMScoreAdjust=500
 

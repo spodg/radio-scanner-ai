@@ -183,8 +183,6 @@ def transcribe_record(record_id, clip_path, channel, duration, model):
 
 
 def main():
-    from pywhispercpp.model import Model
-
     print("=" * 50)
     print("  Pi Local Transcriber (standalone)")
     print("=" * 50)
@@ -193,33 +191,49 @@ def main():
     print(f"  Poll:   every {POLL_INTERVAL}s")
     print("=" * 50)
 
-    print("[transcriber] Loading Whisper model...")
-    model = Model(config.WHISPER_MODEL, n_threads=3)
-    print("[transcriber] Model ready.")
-
+    model = None  # Lazy-load: only when needed
     gpu_online = False
     last_gpu_check = 0
+    idle_since = time.time()
 
     while not _stop:
-        # Periodically check GPU status
         now = time.time()
+
+        # Periodically check GPU status
         if now - last_gpu_check >= GPU_CHECK_INTERVAL:
             gpu_online = check_gpu_online()
             last_gpu_check = now
-            if gpu_online:
-                # GPU is handling transcription, idle
-                time.sleep(POLL_INTERVAL)
-                continue
 
+        # If GPU is online, unload model to free RAM and idle
         if gpu_online:
+            if model is not None:
+                print("[transcriber] GPU online, unloading model to free RAM")
+                del model
+                model = None
+                import gc; gc.collect()
             time.sleep(POLL_INTERVAL)
             continue
 
-        # Get pending records
+        # Check if there's anything to transcribe
         records = get_pending_records(limit=5)
         if not records:
+            # Nothing to do — if idle too long, unload model
+            if model is not None and (now - idle_since) > 120:
+                print("[transcriber] Idle 2min, unloading model to free RAM")
+                del model
+                model = None
+                import gc; gc.collect()
             time.sleep(POLL_INTERVAL)
             continue
+
+        # Work to do — load model if not loaded
+        if model is None:
+            from pywhispercpp.model import Model
+            print("[transcriber] Loading Whisper model...")
+            model = Model(config.WHISPER_MODEL, n_threads=3)
+            print("[transcriber] Model ready.")
+
+        idle_since = now
 
         for rec in records:
             if _stop:
