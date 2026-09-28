@@ -81,6 +81,21 @@ def _generate_record_id():
     return uuid.uuid4().hex[:12]
 
 
+def _find_serial_port():
+    """
+    Find the scanner's serial device. Returns a device path or None.
+    Prefers the configured port, then scans for any ttyACM*/ttyUSB* device
+    (survives the scanner reconnecting under a different name).
+    """
+    import glob
+    # Configured port first
+    if os.path.exists(config.SERIAL_PORT):
+        return config.SERIAL_PORT
+    # Fall back to any available serial device
+    candidates = sorted(glob.glob("/dev/ttyACM*") + glob.glob("/dev/ttyUSB*"))
+    return candidates[0] if candidates else None
+
+
 class PiScannerStation:
     def __init__(self):
         self.scanner = ScannerSerial(config.SERIAL_PORT, config.SERIAL_BAUD)
@@ -637,13 +652,33 @@ class PiScannerStation:
         print(f"  Log:     {config.LOG_FILE}")
         print()
 
-        try:
-            self.scanner.open()
-            model = self.scanner.get_model()
-            print(f"  Scanner: {model}")
-        except Exception as e:
-            print(f"ERROR: Cannot open serial port: {e}")
-            print("  Run: ls /dev/ttyUSB* /dev/ttyACM*")
+        # Wait for the scanner serial port to appear instead of exiting.
+        # Exiting causes systemd to restart us in a tight loop (thousands of
+        # restarts) when the scanner is unplugged/powered off. Instead, poll
+        # and auto-detect the serial device until it comes back.
+        opened = False
+        wait_notified = False
+        while not self._stop.is_set() and not opened:
+            port = _find_serial_port()
+            if port:
+                if port != config.SERIAL_PORT:
+                    print(f"  Serial auto-detected: {port} (config had {config.SERIAL_PORT})")
+                    self.scanner.port = port
+                try:
+                    self.scanner.open()
+                    model = self.scanner.get_model()
+                    print(f"  Scanner: {model}")
+                    opened = True
+                    break
+                except Exception as e:
+                    print(f"  Serial open failed on {port}: {e}")
+            if not wait_notified:
+                print("  Waiting for scanner serial port (is the BCD436HP powered on "
+                      "and USB connected?)... will keep retrying.")
+                wait_notified = True
+            self._stop.wait(10)
+
+        if not opened:
             return
 
         self.audio.start()
