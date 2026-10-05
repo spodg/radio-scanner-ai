@@ -29,3 +29,6 @@ desktop.ini
 
 # Hypothesis (testing)
 .hypothesis/
+
+# Compiled Python
+**/__pycache__/

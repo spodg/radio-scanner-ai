@@ -16,7 +16,7 @@ Requirements:
   - numpy, requests, flask
   - Ollama running locally (ollama serve)
   - Access to Pi dashboard (http://pi3:8080)
-  - Access to NAS (\\\\d1\\RadioScanner)
+  - Access to NAS share (\\\\YOUR_NAS\\share)
 
 Run:  python gpu_server.py
 Stop: Ctrl+C
@@ -42,13 +42,14 @@ import requests
 # Configuration
 # ===========================================================================
 PI_URL = os.environ.get("PI_URL", "http://pi3:8080")
-CLIPS_BASE = os.environ.get("SCANNER_CLIPS_BASE", r"\\d1\RadioScanner\clips")
+# CHANGE THESE to your NAS UNC paths (or set via environment variables)
+CLIPS_BASE = os.environ.get("SCANNER_CLIPS_BASE", r"\\YOUR_NAS\share\clips")
 NAS_LINUX_PREFIX = "/mnt/nas/"
-NAS_WINDOWS_PREFIX = r"\\d1\RadioScanner" + "\\"
+NAS_WINDOWS_PREFIX = r"\\YOUR_NAS\share" + "\\"
 
 # Output directories on NAS
-SUMMARIES_DIR = os.environ.get("SUMMARIES_DIR", r"\\d1\RadioScanner\summaries")
-TRANSCRIBED_DIR = os.environ.get("TRANSCRIBED_DIR", r"\\d1\RadioScanner\transcribed")
+SUMMARIES_DIR = os.environ.get("SUMMARIES_DIR", r"\\YOUR_NAS\share\summaries")
+TRANSCRIBED_DIR = os.environ.get("TRANSCRIBED_DIR", r"\\YOUR_NAS\share\transcribed")
 
 # Whisper
 WHISPER_MODEL = os.environ.get("WHISPER_MODEL", "large-v3")
@@ -156,7 +157,8 @@ def _resolve_pi():
         _pi_ip = socket.gethostbyname("pi3")
         print(f"[init] Resolved pi3 -> {_pi_ip}")
     except socket.gaierror:
-        _pi_ip = "192.168.2.87"
+        # CHANGE THIS to your Pi's actual IP address
+        _pi_ip = "192.168.1.50"
         print(f"[init] DNS failed, using fallback {_pi_ip}")
     return _pi_ip
 

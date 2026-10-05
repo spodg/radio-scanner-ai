@@ -87,6 +87,11 @@ def init_db():
         conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_channel ON transmissions(channel)
         """)
+        # Composite index for day_transmissions and date-range + transcribed queries
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_time_transcribed
+            ON transmissions(time, transcribed)
+        """)
 
 
 def insert_transmission(record: dict):
@@ -177,7 +182,7 @@ def get_pi_transcribed(limit=100):
               AND text != '(no speech)'
               AND text != '(audio not found)'
               AND clip != ''
-            ORDER BY time ASC, id ASC
+            ORDER BY time DESC, id DESC
             LIMIT ?
         """, (limit,)).fetchall()
         return [_row_to_dict(r) for r in rows]

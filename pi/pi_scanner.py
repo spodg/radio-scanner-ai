@@ -446,13 +446,15 @@ class PiScannerStation:
             self._stop.wait(30)
 
     def _run_text_decoder_pass(self):
-        """Find GPU-transcribed records without text decoding and decode them."""
+        """Find transcribed records that have never been through the text decoder
+        and decode them. Only looks at empty-string decoded_text (never processed);
+        '{}' means already processed with no findings, so it is skipped."""
         with scanner_db.get_db() as conn:
             rows = conn.execute("""
-                SELECT id, text, name, channel, decoded_text FROM transmissions
+                SELECT id, text, name, channel FROM transmissions
                 WHERE transcribed = 1
                   AND text != '' AND text != '(no speech)' AND text != '(audio not found)'
-                  AND (decoded_text = '{}' OR decoded_text = '')
+                  AND decoded_text = ''
                 LIMIT 200
             """).fetchall()
 
@@ -460,8 +462,9 @@ class PiScannerStation:
             # Use channel name for code profile matching (more accurate than display name)
             channel = row["channel"] if row["channel"] else row["name"]
             text_decoded = _run_text_decoders(row["text"], channel)
+            # Store '{}' (not empty) so this record is not re-processed every cycle
             scanner_db.update_transmission(row["id"], {
-                "decoded_text": text_decoded or {}
+                "decoded_text": text_decoded if text_decoded else {}
             })
 
     def _convert_wavs_to_mp3(self, sp):
@@ -490,36 +493,52 @@ class PiScannerStation:
             except Exception:
                 pass
 
-        # Re-ingest orphan WAV files (saved but not in DB — lost during restart)
+        # Re-ingest orphan WAV files (saved but not in DB — lost during restart).
+        # Only scan today's and yesterday's date folders (not all history) to
+        # avoid an expensive recursive glob over the whole NAS every cycle.
         import glob as _glob
         try:
-            with scanner_db.get_db() as conn:
-                existing_clips = set(
-                    r[0] for r in conn.execute("SELECT clip FROM transmissions").fetchall()
-                )
-                # Build set of known basenames (handles path format differences)
-                known_basenames = set()
-                for c in existing_clips:
-                    if c:
-                        base = os.path.basename(c)
-                        known_basenames.add(base)
-                        # Also add .wav variant of .mp3 files
-                        if base.endswith(".mp3"):
-                            known_basenames.add(base[:-4] + ".wav")
-
             now = time.time()
+            today = dt.datetime.now()
+            scan_folders = [
+                today.strftime("%Y%m%d"),
+                (today - dt.timedelta(days=1)).strftime("%Y%m%d"),
+            ]
+
+            # Collect candidate WAVs only from recent folders
+            candidate_wavs = []
+            for folder in scan_folders:
+                folder_path = os.path.join(config.CLIPS_DIR, folder)
+                if os.path.isdir(folder_path):
+                    candidate_wavs.extend(_glob.glob(os.path.join(folder_path, "*.wav")))
+
+            if not candidate_wavs:
+                return
+
+            # Build known basenames only from recent DB records (last 2 days)
+            cutoff = (today - dt.timedelta(days=2)).isoformat()
+            with scanner_db.get_db() as conn:
+                recent_clips = conn.execute(
+                    "SELECT clip FROM transmissions WHERE time >= ?", (cutoff,)
+                ).fetchall()
+            known_basenames = set()
+            for (c,) in recent_clips:
+                if c:
+                    base = os.path.basename(c)
+                    known_basenames.add(base)
+                    if base.endswith(".mp3"):
+                        known_basenames.add(base[:-4] + ".wav")
+
             reingested = 0
-            for wav in sorted(_glob.glob(os.path.join(config.CLIPS_DIR, "**", "*.wav"), recursive=True)):
+            for wav in sorted(candidate_wavs):
                 basename = os.path.basename(wav)
                 if basename in known_basenames:
                     continue
                 # Skip if MP3 version already exists (conversion in progress or done)
-                mp3_version = wav[:-4] + ".mp3"
-                if os.path.exists(mp3_version):
+                if os.path.exists(wav[:-4] + ".mp3"):
                     continue
                 # Wait 5 minutes before re-ingesting to avoid races
-                age = now - os.path.getmtime(wav)
-                if age < 300:
+                if now - os.path.getmtime(wav) < 300:
                     continue
                 import wave as _wave
                 try:
@@ -540,20 +559,18 @@ class PiScannerStation:
                 except Exception:
                     time_str = dt.datetime.now().isoformat(timespec="seconds")
 
-                # Parse metadata from filename: YYYYMMDD_HHMMSS_N_System___Group___Channel___Freq.wav
+                # Parse metadata from filename
                 import re as _re
                 fname_noext = fname.rsplit('.', 1)[0]
                 m = _re.match(r'\d{8}_\d{6}(?:_\d+)?_(.*)', fname_noext)
                 raw_name = m.group(1) if m else fname_noext
                 parts = _re.split(r'_{3,}', raw_name)
                 parts = [p.replace('_', ' ').strip() for p in parts if p.strip()]
-                # Parts: [System, Group, Channel, Freq] or fewer
                 r_system = parts[0] if len(parts) >= 1 else ""
                 r_group = parts[1] if len(parts) >= 2 else ""
                 r_channel = parts[2] if len(parts) >= 3 else ""
                 r_freq = parts[3] if len(parts) >= 4 else ""
                 display_name = ' / '.join(parts[:3]) if parts else raw_name.replace('_', ' ')[:60]
-                # Default system if we only got site name
                 if r_system and not r_system.startswith("Allen") and not r_system.startswith("Indiana"):
                     r_system = "Indiana Project Hoosier"
                 elif "Public Safety" in r_system:
@@ -574,24 +591,13 @@ class PiScannerStation:
                     "source": "pi_reingest",
                 })
                 reingested += 1
-
-                # Add to transcription queue immediately
-                mock_state = ReceptionState(
-                    active=False, frequency=r_freq,
-                    system_name=r_system, group_name=r_group,
-                    channel_name=r_channel,
-                )
-                try:
-                    seg_time = dt.datetime.fromisoformat(time_str)
-                except Exception:
-                    seg_time = dt.datetime.now()
-                self._queue.put((record_id, wav, mock_state, seg_time, dur))
-                self._update_queue_count()
+                # Note: the separate pi-transcriber process picks up pending
+                # records from the DB directly — no in-process queue needed.
 
             if reingested:
                 print(f"[cleanup] Re-ingested {reingested} orphan WAV(s)")
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[cleanup] re-ingest error: {e}")
 
     def _split_on_silence(self, audio, sr):
         gap_sec = config.SILENCE_SPLIT_SEC

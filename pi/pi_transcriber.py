@@ -24,13 +24,19 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import config
 import scanner_db
 
+# Limit CPU priority so transcriber never starves the scanner
+try:
+    os.nice(19)  # Lowest priority
+except OSError:
+    pass
+
 # Text decoders
 from codes import decode_for
 from phonetic import decode_plates
 from phone import detect_phones
 
 POLL_INTERVAL = 3  # seconds between checking for new items
-GPU_CHECK_INTERVAL = getattr(config, 'GPU_CHECK_INTERVAL', 30)
+GPU_CHECK_INTERVAL = getattr(config, 'GPU_CHECK_INTERVAL', 10)
 GPU_SERVER_URL = getattr(config, 'GPU_SERVER_URL', '')
 
 _stop = False
@@ -217,9 +223,11 @@ def main():
         # Check if there's anything to transcribe
         records = get_pending_records(limit=5)
         if not records:
-            # Nothing to do — if idle too long, unload model
-            if model is not None and (now - idle_since) > 120:
-                print("[transcriber] Idle 2min, unloading model to free RAM")
+            # Nothing to do. Keep the model loaded through normal traffic gaps
+            # (reloading it repeatedly is expensive). Only unload after a long
+            # idle period — if the GPU comes online we unload immediately above.
+            if model is not None and (now - idle_since) > 600:
+                print("[transcriber] Idle 10min, unloading model to free RAM")
                 del model
                 model = None
                 import gc; gc.collect()
@@ -230,7 +238,8 @@ def main():
         if model is None:
             from pywhispercpp.model import Model
             print("[transcriber] Loading Whisper model...")
-            model = Model(config.WHISPER_MODEL, n_threads=3)
+            # 2 threads leaves CPU headroom for the capture process (Pi3B+ = 4 cores)
+            model = Model(config.WHISPER_MODEL, n_threads=2)
             print("[transcriber] Model ready.")
 
         idle_since = now

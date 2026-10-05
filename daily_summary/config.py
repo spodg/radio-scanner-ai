@@ -33,10 +33,11 @@ GROQ_MODEL = os.environ.get("GROQ_MODEL", "llama-3.1-8b-instant")
 # OUTPUT
 # =============================================================================
 # Where to write daily summary files (Markdown reports).
-OUTPUT_DIR = os.environ.get("SUMMARY_OUTPUT_DIR", r"\\d1\RadioScanner\summaries")
+# CHANGE THIS to a local folder or your NAS UNC path.
+OUTPUT_DIR = os.environ.get("SUMMARY_OUTPUT_DIR", r"\\YOUR_NAS\share\summaries")
 
 # Where to write raw transcription logs (plain text, one per day).
-TRANSCRIBED_DIR = os.environ.get("TRANSCRIBED_OUTPUT_DIR", r"\\d1\RadioScanner\transcribed")
+TRANSCRIBED_DIR = os.environ.get("TRANSCRIBED_OUTPUT_DIR", r"\\YOUR_NAS\share\transcribed")
 
 # =============================================================================
 # SUMMARY PARAMETERS

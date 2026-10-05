@@ -105,7 +105,7 @@ DB_PATH = "/home/pi/scanner/scanner.db"
 # =============================================================================
 # IP or hostname of the machine running gpu_server.py
 # Used for status display on dashboard and auto-discovery.
-GPU_SERVER_URL = "http://192.168.2.36:5555"
+GPU_SERVER_URL = ""  # e.g., "http://192.168.1.100:5555" — leave empty for Pi-only mode
 
 # How often Pi checks if GPU server is online (seconds)
 GPU_CHECK_INTERVAL = 30
