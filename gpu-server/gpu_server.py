@@ -61,46 +61,26 @@ WHISPER_COMPUTE_TYPE = os.environ.get("WHISPER_COMPUTE_TYPE", "int8")
 # the same speed as float32 on Pascal but uses ~half the VRAM (float16 is not
 # accelerated on Pascal, so it is intentionally not used here).
 WHISPER_BEAM_SIZE = int(os.environ.get("WHISPER_BEAM_SIZE", "5"))
+# Batched inference (VAD-chunked) is ~1.7x faster on real clips and its VAD
+# drops silence, which also stops the prompt-echo/YouTube hallucinations the
+# sequential path produced on near-silent audio. Benchmarked on a GTX 1080 Ti.
+WHISPER_USE_BATCHED = os.environ.get("WHISPER_USE_BATCHED", "1") == "1"
+WHISPER_BATCH_SIZE = int(os.environ.get("WHISPER_BATCH_SIZE", "8"))
 WHISPER_LANGUAGE = "en"
 WHISPER_SILENCE_RMS = 0.0015
-WHISPER_PROMPT = (
-    # Unit designators (most common misrecognition source)
-    "Medic 1, Medic 2, Medic 3, Medic 4, Medic 5, Medic 7, Medic 8, Medic 9, "
-    "Medic 11, Medic 12, Medic 15, Medic 21, Medic 25, Medic 35, Medic 45, "
-    "Medic 71, Medic 81, Medic 94, Medic 95, Medic 108, Medic 115, Medic 135, Medic 195. "
-    "Engine 1, Engine 2, Engine 3, Engine 4, Engine 5, Engine 7, Engine 8, Engine 9, "
-    "Engine 11, Engine 12, Engine 15, Engine 181. "
-    "Ladder 1, Ladder 2, Ladder 3, Ladder 7. "
-    "Squad 1, Squad 2, Squad 3, Squad 4, Squad 5. "
-    "Battalion 1, Battalion 2, Battalion 3. "
-    "Unit 1, Unit 2, Unit 3, Unit 4, Unit 5, Unit 6, Unit 7, Unit 8. "
-    "Rescue 1, Rescue 2, Rescue 3. "
-    "6 is en route. 20 is en route. 35 is en route. 45 is en route. "
-    "6, clear. 20, clear. 35, clear. Show me en route. Show me on scene. "
-    "Dispatch, county dispatch, city dispatch. "
-    "Show us en route. Show us on scene. Show me out. Show us clear. "
-    "10-4, copy. 10-8, in service. 10-42, end of shift. 10-76, en route. "
-    "Signal 22, signal 30, signal 40, signal 43, signal 46, signal 50, signal 75. "
-    "Copy that. Be advised. Negative. Affirmative. Roger. Clear. "
-    "Emergency run. Stat transfer. Priority 1. Code 3. "
-    "Parkview Hospital, Lutheran Hospital, Dupont Hospital. "
-    "Parkview North, Parkview South, Parkview Randallia, Parkview Whitley. "
-    "Patient, chest pain, difficulty breathing, cardiac arrest, unresponsive. "
-    "EMS, paramedic, EMT, ambulance, first responders. "
-    "Structure fire, working fire, mutual aid. "
-    "Sheriff, deputy, trooper, officer, sergeant. "
-    "Traffic stop, vehicle pursuit, suspect, subject, complainant. "
-    "Vehicle, plate, registration, driver's license, warrant. "
-    "Adam Boy Charles David Edward Frank George Henry Ida John King Lincoln "
-    "Mary Nora Ocean Paul Queen Robert Sam Tom Union Victor William X-ray Young Zebra. "
-    "Fort Wayne, Allen County, Whitley County, DeKalb County, Noble County, "
-    "Adams County, Wells County, Huntington County, LaGrange County, Steuben County, Indiana. "
-    "Coliseum, Coldwater, Lima Road, State Road 3, State Road 9, "
-    "Interstate 69, Interstate 469, US 30, US 33. "
-    "Clinton, Calhoun, Jefferson, Washington, Lafayette, Stellhorn, Dupont, "
-    "Maysville Road, Goshen Road, Bluffton Road, Decatur Road. "
-    "Auburn, Garrett, Kendallville, Ligonier, Columbia City, Bluffton, Decatur. "
-)
+# Initial prompt: tell Whisper the DOMAIN up front (police/fire/EMS radio with
+# ten-codes and signal codes) plus a COMPACT set of high-value local terms.
+# A concise framing beats a long unit roster: benchmarking showed a ~400-word
+# roster got echoed verbatim onto near-silent clips (e.g. "Engine 1, dispatch,
+# 10-4, signal 22"), while this short prompt improves code/term recognition
+# without that hallucination. Edit the place/agency names for your area.
+WHISPER_PROMPT = os.environ.get("WHISPER_PROMPT", (
+    "The following is a radio transmission between police, fire, and EMS "
+    "dispatchers and units using ten-codes (10-4, 10-8, 10-42, 10-76) and "
+    "signal codes (signal 22, signal 30, signal 50). Units include Medic, "
+    "Engine, Ladder, Squad, Battalion, Rescue, and Unit numbers. Common terms: "
+    "dispatch, en route, on scene, clear, copy, structure fire, traffic stop."
+))
 
 # Post-processing corrections for consistent Whisper errors on scanner audio.
 # Applied after transcription. Keys are regex patterns (case-insensitive).
@@ -213,13 +193,24 @@ class Transcriber:
 
     def __init__(self):
         self.model = None
+        self.pipe = None
 
     def load(self):
-        from faster_whisper import WhisperModel
+        from faster_whisper import WhisperModel, BatchedInferencePipeline
         print(f"[whisper] Loading {WHISPER_MODEL} on {WHISPER_DEVICE} ({WHISPER_COMPUTE_TYPE})...")
         self.model = WhisperModel(WHISPER_MODEL, device=WHISPER_DEVICE,
                                   compute_type=WHISPER_COMPUTE_TYPE)
-        print("[whisper] Ready.")
+        # Batched pipeline uses VAD to split speech into chunks it runs through
+        # the GPU together. On real dispatch clips this is ~1.7x faster than the
+        # sequential path AND the VAD drops leading/trailing silence, which
+        # removes the prompt-echo / "subtitles by amara.org" hallucinations that
+        # Whisper emits when fed near-silent audio.
+        if WHISPER_USE_BATCHED:
+            self.pipe = BatchedInferencePipeline(model=self.model)
+            print(f"[whisper] Ready (batched, batch_size={WHISPER_BATCH_SIZE}).")
+        else:
+            self.pipe = None
+            print("[whisper] Ready (sequential).")
 
     def transcribe(self, audio: np.ndarray) -> str:
         """Transcribe float32 mono 16kHz audio. Returns text or empty."""
@@ -229,12 +220,19 @@ class Transcriber:
         if rms < WHISPER_SILENCE_RMS:
             return ""
 
-        segments, _ = self.model.transcribe(
-            audio, language=WHISPER_LANGUAGE, beam_size=WHISPER_BEAM_SIZE,
-            vad_filter=False, condition_on_previous_text=False,
-            no_speech_threshold=0.6, log_prob_threshold=-1.0,
-            initial_prompt=WHISPER_PROMPT,
-        )
+        if self.pipe is not None:
+            segments, _ = self.pipe.transcribe(
+                audio, language=WHISPER_LANGUAGE, batch_size=WHISPER_BATCH_SIZE,
+                vad_filter=True, no_speech_threshold=0.6, log_prob_threshold=-1.0,
+                initial_prompt=WHISPER_PROMPT,
+            )
+        else:
+            segments, _ = self.model.transcribe(
+                audio, language=WHISPER_LANGUAGE, beam_size=WHISPER_BEAM_SIZE,
+                vad_filter=False, condition_on_previous_text=False,
+                no_speech_threshold=0.6, log_prob_threshold=-1.0,
+                initial_prompt=WHISPER_PROMPT,
+            )
         parts = []
         for seg in segments:
             if seg.no_speech_prob > 0.5 or seg.avg_logprob < -1.0:
