@@ -603,10 +603,12 @@ class PiScannerStation:
         if n_frames < 2:
             return [(audio, 0.0)]
 
-        is_silent = np.zeros(n_frames, dtype=bool)
-        for i in range(n_frames):
-            seg = audio[i * hop:(i + 1) * hop]
-            is_silent[i] = np.sqrt(np.mean(seg ** 2)) < silence_rms
+        # Per-frame RMS, vectorized: reshape into (n_frames, hop) and compare
+        # mean-square to silence_rms**2 (equivalent to rms < silence_rms, but
+        # avoids a Python loop and a per-frame sqrt).
+        frames = audio[:n_frames * hop].reshape(n_frames, hop).astype(np.float64)
+        mean_sq = np.mean(frames ** 2, axis=1)
+        is_silent = mean_sq < (silence_rms ** 2)
 
         gap_frames = int(gap_sec / 0.02)
         splits = []
