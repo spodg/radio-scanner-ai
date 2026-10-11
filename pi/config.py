@@ -49,17 +49,15 @@ SILENCE_SPLIT_RMS = 0.003
 WHISPER_SILENCE_RMS = 0.003
 
 # =============================================================================
-# AUDIO DECODERS (DTMF / tones / Morse)
+# AUDIO DECODERS (tones / Morse)
 # =============================================================================
 # These detect non-voice signalling in the captured audio. On a voice/P25
 # system they produce almost nothing real, and running them on every voice
 # transmission just generates false positives (voice formants that happen to
-# land on DTMF or CW frequencies). So they are OFF by default and only run on
-# channels whose name contains one of the substrings below (case-insensitive).
+# land on CW frequencies). So they only run on channels whose name contains one
+# of the substrings below (case-insensitive).
 #
-# Set to [] to disable a decoder entirely. Example: DTMF two-tone paging is
-# real on a Fire simulcast dispatch channel, so enable it just there.
-DTMF_CHANNELS = ["simulcast"]      # channels that actually carry DTMF/tone paging
+# Set to [] to disable a decoder entirely.
 TONE_CHANNELS = ["simulcast", "air medical", "air operations", "hearn"]
 MORSE_CHANNELS = []                # no amateur-repeater CW on this system -> off
 

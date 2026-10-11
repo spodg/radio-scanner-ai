@@ -108,8 +108,6 @@ def _build_decoded_display(record):
     parts = []
     # Audio-based decoders (stored in 'decoded' field)
     d = record.get("decoded") or {}
-    if d.get("dtmf"):
-        parts.append(f'<span class="badge b-dtmf" data-dtype="dtmf">DTMF:{d["dtmf"]}</span>')
     if d.get("morse"):
         parts.append(f'<span class="badge b-morse" data-dtype="morse">CW:{d["morse"]}</span>')
     if d.get("tones") and isinstance(d["tones"], list):
@@ -210,7 +208,7 @@ tr:hover{background:#1a2744}
 .col-decoded{font-size:11px;white-space:nowrap;color:#a5d6a7;max-width:150px;flex-shrink:0;overflow:hidden;text-overflow:ellipsis}
 .col-decoded .badge{display:inline-block;padding:1px 5px;border-radius:3px;font-size:10px;margin:1px}
 .col-decoded .b-code{background:#1565c0}.col-decoded .b-plate{background:#2e7d32}
-.col-decoded .b-phone{background:#6a1b9a}.col-decoded .b-dtmf{background:#ef6c00}
+.col-decoded .b-phone{background:#6a1b9a}
 .col-decoded .b-morse{background:#7e57c2}.col-decoded .b-tones{background:#00695c}
 .decoded-filters{display:flex;gap:6px;flex-wrap:wrap;align-items:center;padding:5px 0;margin-bottom:6px}
 .decoded-filters span.df-label{font-size:10px;color:#888;margin-right:2px;white-space:nowrap}
@@ -317,7 +315,6 @@ HTML += """<form class="controls" method="GET" id="filter-form">
 </form>
 <div class="decoded-filters" id="decoded-filters">
 <span class="df-label">Decoded:</span>
-<button type="button" class="df-btn active" data-dtype="dtmf">DTMF</button>
 <button type="button" class="df-btn active" data-dtype="morse">CW</button>
 <button type="button" class="df-btn active" data-dtype="tones">Tones</button>
 <button type="button" class="df-btn active" data-dtype="codes">Codes</button>
@@ -453,7 +450,7 @@ HTML += """<script>
 // ========== Decoded type filters ==========
 (function() {
     const DKEY = 'scanner_decoded_visible';
-    const ALL_TYPES = ['dtmf','morse','tones','codes','plates','phones'];
+    const ALL_TYPES = ['morse','tones','codes','plates','phones'];
     let visible = new Set(ALL_TYPES);
 
     function load() {

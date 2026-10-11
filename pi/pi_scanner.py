@@ -360,27 +360,17 @@ class PiScannerStation:
                 continue
 
             # Run audio-based decoders. These only make sense on the few
-            # channels that actually carry DTMF/tone paging or CW; on voice
-            # channels they just produce false positives, so they are gated by
-            # channel name (see config.*_CHANNELS). FSK/data-burst decoding was
-            # removed: naive demodulation of 16 kHz line-in produced only
-            # hallucinated unit IDs (use multimon-ng for real paging decode).
+            # channels that actually carry tone paging or CW; on voice channels
+            # they just produce false positives, so they are gated by channel
+            # name (see config.*_CHANNELS). FSK/data-burst and DTMF decoding were
+            # removed: on this system they only ever produced false positives
+            # from voice formants (use multimon-ng for real paging decode).
             decoded = {}
             chan_l = (state.channel_name or state.display_name or "").lower()
-            if _channel_enabled(chan_l, config.DTMF_CHANNELS) or \
-               _channel_enabled(chan_l, config.TONE_CHANNELS):
+            if _channel_enabled(chan_l, config.TONE_CHANNELS):
                 try:
                     sig = analyze_tones(seg, sr, silence_rms=config.WHISPER_SILENCE_RMS)
-                    if _channel_enabled(chan_l, config.DTMF_CHANNELS) \
-                            and sig.get("dtmf") and len(sig["dtmf"]) >= 3:
-                        dtmf = sig["dtmf"]
-                        # Reject voice-harmonic artifacts: real DTMF rarely uses
-                        # the A/B/C/D column, and a single repeated digit is a
-                        # sustained formant, not touch-tones.
-                        rare = sum(1 for c in dtmf if c in "ABCD")
-                        if rare == 0 and len(set(dtmf)) > 1:
-                            decoded["dtmf"] = dtmf
-                    if _channel_enabled(chan_l, config.TONE_CHANNELS) and sig.get("tones"):
+                    if sig.get("tones"):
                         decoded["tones"] = sig["tones"]
                 except Exception:
                     pass
