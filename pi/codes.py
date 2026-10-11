@@ -277,8 +277,10 @@ def pick_profile(channel_name: str) -> Profile:
 
     # 1) Clearly non-police channels (aviation, rail, school, etc.) short-circuit
     #    to no decoding, even if a geographic keyword like "allen county" also
-    #    appears (e.g. "NW Allen County Schools").
-    if any(kw in name for kw in NON_POLICE_KEYWORDS):
+    #    appears (e.g. "NW Allen County Schools"). Match on word boundaries so
+    #    short keywords don't match inside unrelated words (e.g. "tow" must not
+    #    match "Towns Police").
+    if any(_kw_matches(kw, name) for kw in NON_POLICE_KEYWORDS):
         return NO_CODE_PROFILE
 
     # 2) Specific agency match (ISP / Fort Wayne City / Allen County).
@@ -377,6 +379,12 @@ _DOB_CONTEXT_RE = re.compile(r"\b(?:date of birth|d\.?o\.?b\.?|born|birthday)\b"
                              re.IGNORECASE)
 # Explicit "signal 22" / "sig 22" / "signal-22".
 _SIGNAL_RE = re.compile(r"\b(?:signal|sig)\s*[-#]?\s*(\d{1,3})\b")
+# "code N" is used interchangeably with "signal N" by dispatchers here
+# (e.g. "code 12 with inmates", "code 30" = traffic stop, "code 40"). But
+# "code 1".."code 4" are the standard fire/EMS response priorities (code 3 =
+# lights & siren), NOT signals, so those are excluded to avoid mis-decoding.
+_CODE_RE = re.compile(r"\bcode\s*[-#]?\s*(\d{1,3})\b", re.IGNORECASE)
+_CODE_RESPONSE_PRIORITIES = {1, 2, 3, 4}
 # Any bare number.
 _BARE_NUM_RE = re.compile(r"\b(\d{1,3})\b")
 
@@ -424,6 +432,19 @@ def decode_text(text: str, profile: Profile = None):
     # 2) Explicit "signal N" / "sig N" — only decode when the word is present.
     for m in _SIGNAL_RE.finditer(norm):
         num = int(m.group(1))
+        if num in profile.signals and ("sig", num) not in seen:
+            seen.add(("sig", num))
+            results.append({"code": f"signal {num}", "type": "signal",
+                            "meaning": profile.signals[num]})
+
+    # 3) "code N" — treated as a signal reference (local usage), except the
+    #    fire/EMS response priorities code 1-4 which are not signals.
+    for m in _CODE_RE.finditer(norm):
+        if near_dob(m.start()):
+            continue
+        num = int(m.group(1))
+        if num in _CODE_RESPONSE_PRIORITIES:
+            continue
         if num in profile.signals and ("sig", num) not in seen:
             seen.add(("sig", num))
             results.append({"code": f"signal {num}", "type": "signal",
