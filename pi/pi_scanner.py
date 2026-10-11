@@ -119,29 +119,54 @@ class PiScannerStation:
         self._stop = threading.Event()
         self._transcriber = None
         self._screen_enabled = self._load_screen_setting()
+        # Throttling/caching for status writes (A1/A2): the poll loop runs at
+        # ~300ms but the dashboard only needs ~1s freshness. Avoid a DB COUNT
+        # and a status.json rewrite on every single poll.
+        self._status_min_interval = 1.0  # seconds between status.json writes
+        self._last_status_write = 0.0
+        self._pending_count = 0
+        self._pending_count_ts = 0.0
+        self._pending_count_ttl = 5.0  # seconds to cache the pending count
 
         Path(config.LOCAL_CLIPS_DIR).mkdir(parents=True, exist_ok=True)
 
-    def _write_status(self, state, channel):
-        """Write live status for the dashboard to read."""
-        # Only query STS if screen display is enabled
-        screen_lines = self._get_screen() if self._screen_enabled else []
+    def _cached_pending_count(self):
+        """Return the untranscribed count, cached for a few seconds so the
+        real-time poll loop doesn't hit SQLite on every cycle."""
+        now = time.time()
+        if now - self._pending_count_ts >= self._pending_count_ttl:
+            try:
+                self._pending_count = scanner_db.get_pending_count()
+            except Exception:
+                pass
+            self._pending_count_ts = now
+        return self._pending_count
 
+    def _write_status_file(self, state, channel):
+        """Write status.json. Screen grab is gated by _screen_enabled and the
+        pending count is cached (see _cached_pending_count)."""
+        screen_lines = self._get_screen() if self._screen_enabled else []
         status = {
             "state": state,
             "channel": channel,
-            "queue": scanner_db.get_pending_count(),
+            "queue": self._cached_pending_count(),
             "updated": dt.datetime.now().isoformat(timespec="seconds"),
             "screen": screen_lines,
         }
         try:
             with open("/home/pi/scanner/status.json", "w") as f:
                 json.dump(status, f)
+            self._last_status_write = time.time()
         except Exception:
             pass
 
+    def _write_status(self, state, channel):
+        """Write live status immediately (used on receive/scan transitions)."""
+        self._write_status_file(state, channel)
+
     def _on_poll(self, state):
-        """Called every poll cycle — update the screen display."""
+        """Called every poll cycle (~300ms). Throttled to one status.json write
+        per _status_min_interval so the real-time poll loop stays light."""
         # Reload screen setting every ~5s (poll runs at 300ms)
         if not hasattr(self, '_screen_check_counter'):
             self._screen_check_counter = 0
@@ -150,20 +175,12 @@ class PiScannerStation:
             self._screen_check_counter = 0
             self._screen_enabled = self._load_screen_setting()
 
-        screen_lines = self._get_screen() if self._screen_enabled else []
+        if time.time() - self._last_status_write < self._status_min_interval:
+            return
+
         st = "receiving" if state.active else "scanning"
-        status = {
-            "state": st,
-            "channel": state.display_name if state.active else "",
-            "queue": scanner_db.get_pending_count(),
-            "updated": dt.datetime.now().isoformat(timespec="seconds"),
-            "screen": screen_lines,
-        }
-        try:
-            with open("/home/pi/scanner/status.json", "w") as f:
-                json.dump(status, f)
-        except Exception:
-            pass
+        channel = state.display_name if state.active else ""
+        self._write_status_file(st, channel)
 
     def _get_screen(self):
         """Grab the LCD screen content via STS command."""
@@ -348,15 +365,27 @@ class PiScannerStation:
             safe_name = "___".join(p for p in name_parts if p)
             base = f"{ts_str}{suffix}_{safe_name}"
             clip_dir = os.path.join(get_clips_dir(), date_folder)
-            os.makedirs(clip_dir, exist_ok=True)
             wav_path = os.path.join(clip_dir, f"{base}.wav")
 
             pcm16 = (np.clip(seg, -1, 1) * 32767).astype("<i2")
-            with wave.open(wav_path, "wb") as wf:
-                wf.setnchannels(1)
-                wf.setsampwidth(2)
-                wf.setframerate(sr)
-                wf.writeframes(pcm16.tobytes())
+            # Write the WAV, retrying once if the date folder was removed by the
+            # NAS sync worker between makedirs and open (race condition).
+            _written = False
+            for _attempt in range(2):
+                try:
+                    os.makedirs(clip_dir, exist_ok=True)
+                    with wave.open(wav_path, "wb") as wf:
+                        wf.setnchannels(1)
+                        wf.setsampwidth(2)
+                        wf.setframerate(sr)
+                        wf.writeframes(pcm16.tobytes())
+                    _written = True
+                    break
+                except (FileNotFoundError, OSError) as e:
+                    print(f"[_on_stop] WAV write retry ({_attempt+1}): {e}", file=sys.stderr, flush=True)
+            if not _written:
+                print(f"[_on_stop] failed to write {wav_path}, skipping segment", file=sys.stderr, flush=True)
+                continue
 
             # Run audio-based decoders (fast, just numpy — no transcription needed)
             decoded = {}

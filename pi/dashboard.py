@@ -14,6 +14,7 @@ Or:   systemd service (pi-dashboard.service)
 import os
 import json
 import re
+import time
 import urllib.parse
 from pathlib import Path
 
@@ -71,6 +72,57 @@ def _run_text_decoders(text, channel_name):
 # Config
 STATUS_FILE = Path("/home/pi/scanner/status.json")
 GPU_SERVER_URL = os.environ.get("GPU_SERVER_URL", "")
+
+# CPU% sampler state (A5): compute from the delta between successive /proc/stat
+# reads instead of shelling out to bash with a 1-second sleep on every request.
+_cpu_sample = {"total": 0, "idle": 0, "pct": 0}
+
+
+def _read_cpu_pct():
+    """Return CPU utilization % based on the delta since the last call.
+    Pure Python, non-blocking (no subprocess, no sleep)."""
+    try:
+        with open("/proc/stat") as f:
+            parts = f.readline().split()
+        # user nice system idle iowait irq softirq steal ...
+        vals = [int(x) for x in parts[1:9]]
+        idle = vals[3] + vals[4]  # idle + iowait
+        total = sum(vals)
+        dt_total = total - _cpu_sample["total"]
+        dt_idle = idle - _cpu_sample["idle"]
+        _cpu_sample["total"] = total
+        _cpu_sample["idle"] = idle
+        if dt_total > 0:
+            _cpu_sample["pct"] = max(0, min(100, int((dt_total - dt_idle) * 100 / dt_total)))
+        return _cpu_sample["pct"]
+    except Exception:
+        return _cpu_sample["pct"]
+
+
+# Filter-options cache (A3): get_filter_options runs 4 GROUP BY queries over the
+# whole table. The same key is re-queried on every page load and filter change.
+# Cache per filter-param key with a short TTL so repeated/concurrent requests
+# reuse one result.
+_FILTER_OPTS_TTL = 15.0
+_filter_opts_cache = {}
+
+
+def _cached_filter_options(hours, system, group, channel, freq):
+    key = (hours, system, group, channel, freq)
+    now = time.time()
+    hit = _filter_opts_cache.get(key)
+    if hit is not None and now - hit[0] < _FILTER_OPTS_TTL:
+        return hit[1]
+    opts = scanner_db.get_filter_options(
+        hours=hours, system=system, group=group, channel=channel, freq=freq
+    )
+    _filter_opts_cache[key] = (now, opts)
+    # Bound memory: drop stale entries if the cache grows large.
+    if len(_filter_opts_cache) > 64:
+        for k in [k for k, v in _filter_opts_cache.items()
+                  if now - v[0] >= _FILTER_OPTS_TTL]:
+            _filter_opts_cache.pop(k, None)
+    return opts
 
 
 # --- Helpers ----------------------------------------------------------------
@@ -751,10 +803,8 @@ def index():
     start_rec = (page - 1) * page_size + 1 if total > 0 else 0
     end_rec = total if page >= total_pages else page * page_size
 
-    # Get cascading filter options
-    opts = scanner_db.get_filter_options(
-        hours=hours, system=system, group=group, channel=channel, freq=freq_filter
-    )
+    # Get cascading filter options (A3: short-TTL cache)
+    opts = _cached_filter_options(hours, system, group, channel, freq_filter)
 
     _enrich_results(results, query)
 
@@ -823,9 +873,7 @@ def api_filter_options():
     freq = request.args.get("freq", "").strip()
     hours = int(request.args.get("h") or 24)
 
-    opts = scanner_db.get_filter_options(
-        hours=hours, system=system, group=group, channel=channel, freq=freq
-    )
+    opts = _cached_filter_options(hours, system, group, channel, freq)
     return jsonify(opts)
 
 
@@ -881,26 +929,7 @@ def api_status():
 @app.route("/api/sysinfo")
 def api_sysinfo():
     """Return CPU%, RAM%, and CPU temperature."""
-    import subprocess
-    try:
-        out = subprocess.check_output(
-            ["bash", "-c",
-             "read c1 i1 < <(head -1 /proc/stat | awk '{print $2+$3+$4+$6+$7+$8, $5}'); "
-             "sleep 1; "
-             "read c2 i2 < <(head -1 /proc/stat | awk '{print $2+$3+$4+$6+$7+$8, $5}'); "
-             "echo $(( (c2-c1)*100 / (c2-c1+i2-i1) ))"],
-            timeout=3, text=True
-        ).strip()
-        cpu = int(out)
-    except Exception:
-        try:
-            with open('/proc/loadavg') as f:
-                load1 = float(f.read().split()[0])
-            import multiprocessing
-            cores = multiprocessing.cpu_count()
-            cpu = min(100, int(load1 / cores * 100))
-        except Exception:
-            cpu = 0
+    cpu = _read_cpu_pct()
     try:
         with open('/proc/meminfo') as f:
             mem = {}
