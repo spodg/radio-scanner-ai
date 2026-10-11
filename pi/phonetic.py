@@ -94,6 +94,14 @@ DIGIT_WORDS = {
     "niner": "9",
 }
 
+# Phrases that mean the officer is spelling a PERSON'S NAME, not a plate. A
+# phonetic run introduced by one of these is suppressed from plate detection.
+_NAME_CONTEXT_RE = re.compile(
+    r"(first name|last name|middle name|middle initial|registered owner|"
+    r"name is|named|spelled|spelling|owner is)",
+    re.IGNORECASE,
+)
+
 
 def _token_to_char(tok: str):
     """Return (char, is_strong_phonetic) for a token, or (None, False)."""
@@ -181,7 +189,16 @@ def decode_plates(text: str, min_len: int = 4, max_len: int = 8):
             run_chars.append(ch)
 
         plate = "".join(run_chars)
-        if (min_len <= len(plate) <= max_len) and strong >= 2:
+        # A real plate is alphanumeric: it must contain at least one digit.
+        # An all-letter phonetic run is almost always a spelled person's NAME
+        # ("first name is Kate, King Adam Tom Edward" -> KATE), not a plate.
+        has_digit = any(c.isdigit() for c in plate)
+        # Also suppress runs introduced by explicit name-spelling context, even
+        # if a stray digit (e.g. a nearby date) slips into the run.
+        preceding = " ".join(tokens[max(0, i - 6):i]).lower()
+        name_context = bool(_NAME_CONTEXT_RE.search(preceding))
+        if (min_len <= len(plate) <= max_len) and strong >= 2 \
+                and has_digit and not name_context:
             spoken = " ".join(tokens[i:last_mapped + 1]).strip()
             spoken = re.sub(r"\s+", " ", spoken)
             results.append({"plate": plate, "spoken": spoken})
