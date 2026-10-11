@@ -51,15 +51,15 @@ WHISPER_SILENCE_RMS = 0.003
 # =============================================================================
 # AUDIO DECODERS (tones / Morse)
 # =============================================================================
-# These detect non-voice signalling in the captured audio. On a voice/P25
-# system they produce almost nothing real, and running them on every voice
-# transmission just generates false positives (voice formants that happen to
-# land on CW frequencies). So they only run on channels whose name contains one
-# of the substrings below (case-insensitive).
+# Tone detection (two-tone / Quick Call paging, alert tones) runs on ALL
+# channels: the steady-tone requirement (>=0.5s on one frequency) means voice
+# effectively never false-triggers it, so there is no need to gate by channel.
 #
-# Set to [] to disable a decoder entirely.
-TONE_CHANNELS = ["simulcast", "air medical", "air operations", "hearn"]
-MORSE_CHANNELS = []                # no amateur-repeater CW on this system -> off
+# Morse (CW) only runs on channels whose name contains one of these substrings
+# (case-insensitive). It is off by default ([]) because on a voice/P25 system
+# it only produces voice-formant false positives. Add a substring here only if
+# you actually monitor an amateur-repeater CW ID channel.
+MORSE_CHANNELS = []
 
 # =============================================================================
 # LOCAL TRANSCRIPTION (runs in separate pi-transcriber process)

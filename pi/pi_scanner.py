@@ -359,21 +359,21 @@ class PiScannerStation:
                 print(f"[_on_stop] failed to write {wav_path}, skipping segment", file=sys.stderr, flush=True)
                 continue
 
-            # Run audio-based decoders. These only make sense on the few
-            # channels that actually carry tone paging or CW; on voice channels
-            # they just produce false positives, so they are gated by channel
-            # name (see config.*_CHANNELS). FSK/data-burst and DTMF decoding were
-            # removed: on this system they only ever produced false positives
-            # from voice formants (use multimon-ng for real paging decode).
+            # Run audio-based decoders. Tone detection runs on ALL channels:
+            # the steady-tone requirement (>=0.5s on one frequency) means voice
+            # effectively never false-triggers it (measured ~0% on police voice,
+            # while it catches real EMS/fire two-tone pages that channel gating
+            # was missing). Morse stays channel-gated (off by default) because
+            # on this system it only ever produced voice-formant false positives.
+            # FSK/data-burst and DTMF decoding were removed for the same reason.
             decoded = {}
             chan_l = (state.channel_name or state.display_name or "").lower()
-            if _channel_enabled(chan_l, config.TONE_CHANNELS):
-                try:
-                    sig = analyze_tones(seg, sr, silence_rms=config.WHISPER_SILENCE_RMS)
-                    if sig.get("tones"):
-                        decoded["tones"] = sig["tones"]
-                except Exception:
-                    pass
+            try:
+                sig = analyze_tones(seg, sr, silence_rms=config.WHISPER_SILENCE_RMS)
+                if sig.get("tones"):
+                    decoded["tones"] = sig["tones"]
+            except Exception:
+                pass
             if _channel_enabled(chan_l, config.MORSE_CHANNELS):
                 try:
                     m = morse_decode(seg, sr)

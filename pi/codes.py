@@ -238,6 +238,11 @@ NON_POLICE_KEYWORDS = [
     "school", "red cross", "weather",
     "noaa", "marine", "coast guard", "business", "taxi", "tow", "utility",
     "public works", "transit", "citilink", "roads", "highway dept",
+    # Air medical / air operations (helicopter EMS): these carry aviation
+    # chatter + alert tones, not police ten-codes.
+    "air medical", "air med", "air operations", "air ops", "medevac",
+    "life flight", "lifeline", "samaritan air", "helicopter",
+    "highway department",
 ]
 
 
@@ -260,20 +265,19 @@ def pick_profile(channel_name: str) -> Profile:
     Routing logic:
       1. A specific agency profile (ISP / Fort Wayne City / Allen County) if a
          keyword matches.
-      2. NO_CODE_PROFILE if the channel is clearly non-police (aviation, rail,
-         hospital, school, etc.) -> we decode nothing.
-      3. The generic Indiana police fallback ONLY if the channel looks like law
-         enforcement.
-      4. Otherwise NO_CODE_PROFILE (don't guess police codes for unknown,
-         non-law-enforcement traffic).
+      2. NO_CODE_PROFILE only if the channel is clearly non-police (aviation,
+         rail, school, etc.), where police codes would be plain wrong (an ATC
+         "ten twenty-three" is not "10-23 arrived"). This guard is kept.
+      3. Every other channel gets the generic Indiana profile so codes are
+         decoded across all police/fire/EMS and unknown channels.
     """
     if not channel_name:
-        return NO_CODE_PROFILE
+        return DEFAULT_PROFILE
     name = channel_name.lower()
 
-    # 1) Clearly non-police channels (aviation, rail, hospital, school, etc.)
-    #    short-circuit to no decoding, even if a geographic keyword like
-    #    "allen county" also appears (e.g. "NW Allen County Schools").
+    # 1) Clearly non-police channels (aviation, rail, school, etc.) short-circuit
+    #    to no decoding, even if a geographic keyword like "allen county" also
+    #    appears (e.g. "NW Allen County Schools").
     if any(kw in name for kw in NON_POLICE_KEYWORDS):
         return NO_CODE_PROFILE
 
@@ -282,12 +286,8 @@ def pick_profile(channel_name: str) -> Profile:
         if any(_kw_matches(kw, name) for kw in prof.keywords):
             return prof
 
-    # 3) Looks like law enforcement -> generic police fallback (approximate).
-    if any(kw in name for kw in LAW_ENFORCEMENT_KEYWORDS):
-        return DEFAULT_PROFILE
-
-    # 4) Unknown and not obviously police -> decode nothing.
-    return NO_CODE_PROFILE
+    # 3) Everything else -> generic Indiana police/fire/EMS fallback.
+    return DEFAULT_PROFILE
 
 
 # =============================================================================
