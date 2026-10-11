@@ -15,8 +15,11 @@ RestartSec=15
 # Pin Whisper to CPU cores 2-3 only. Cores 0-1 stay free for the capture
 # process, sshd, and the dashboard so the Pi NEVER becomes unresponsive.
 AllowedCPUs=2-3
-# Hard cap: at most 1.5 cores of actual compute even within those 2 cores.
-CPUQuota=150%
+# Allow both allocated cores (= 50% of the 4-core Pi) so local transcription
+# runs at full pace on tiny.en with n_threads=2. The cpuset above keeps it off
+# cores 0-1, so even at this cap the capture/dashboard stay responsive and total
+# Pi CPU stays well under ~80%.
+CPUQuota=200%
 # Lowest scheduling priority and weight — always yields to everything else.
 Nice=19
 CPUWeight=10
