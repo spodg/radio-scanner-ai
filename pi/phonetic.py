@@ -141,8 +141,11 @@ def decode_plates(text: str, min_len: int = 4, max_len: int = 8):
             i += 1
             continue
 
-        # Try to grow a run starting here.
-        run_chars = []
+        # Try to grow a run starting here. Track each char's source so we can
+        # collapse the "letter + phonetic-word-for-same-letter" doubling that
+        # happens when an officer spells "H-Henry, A-Adam" (which would
+        # otherwise decode to "HHAA..."). run is a list of (char, is_letter_tok).
+        run = []            # list of (char, from_single_letter_token)
         strong = 0
         j = i
         last_mapped = i - 1
@@ -154,18 +157,28 @@ def decode_plates(text: str, min_len: int = 4, max_len: int = 8):
             # multi-digit number token: expand to individual digits
             if t.isdigit():
                 for d in t:
-                    run_chars.append(d)
+                    run.append((d, False))
                 last_mapped = j
                 j += 1
                 continue
             ch, is_strong = _token_to_char(t)
             if ch is None:
                 break
-            run_chars.append(ch)
+            is_single = len(t.strip(".,")) == 1 and t.strip(".,").isalpha()
+            run.append((ch, is_single))
             if is_strong:
                 strong += 1
             last_mapped = j
             j += 1
+
+        # Collapse adjacent identical letters when one came from a single-letter
+        # token and the other from a spoken phonetic word (the "C-Charlie" form).
+        run_chars = []
+        for idx, (ch, is_single) in enumerate(run):
+            if run_chars and ch == run[idx - 1][0] and is_single != run[idx - 1][1] \
+                    and ch.isalpha():
+                continue  # same letter spelled twice (letter + phonetic word)
+            run_chars.append(ch)
 
         plate = "".join(run_chars)
         if (min_len <= len(plate) <= max_len) and strong >= 2:

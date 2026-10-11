@@ -41,7 +41,6 @@ from scanner_serial import ScannerSerial, ScannerPoller, ReceptionState
 from audio_capture import ALSAAudioCapture
 from tones import analyze as analyze_tones
 from morse import decode as morse_decode
-from fsk_decode import decode_fsk, format_results as format_fsk
 import scanner_db
 from nas_sync import get_clips_dir
 from audio_health import AudioHealthMonitor, find_usb_audio_device
@@ -53,6 +52,12 @@ from text_decoders import run_text_decoders as _run_text_decoders
 def _generate_record_id():
     """Generate a short unique ID for each transmission record."""
     return uuid.uuid4().hex[:12]
+
+
+def _channel_enabled(channel_lower, substrings):
+    """True if the (already-lowercased) channel name contains any of the
+    configured substrings. Empty list -> always False (decoder disabled)."""
+    return any(s in channel_lower for s in substrings)
 
 
 def _find_serial_port():
@@ -354,40 +359,41 @@ class PiScannerStation:
                 print(f"[_on_stop] failed to write {wav_path}, skipping segment", file=sys.stderr, flush=True)
                 continue
 
-            # Run audio-based decoders (fast, just numpy — no transcription needed)
+            # Run audio-based decoders. These only make sense on the few
+            # channels that actually carry DTMF/tone paging or CW; on voice
+            # channels they just produce false positives, so they are gated by
+            # channel name (see config.*_CHANNELS). FSK/data-burst decoding was
+            # removed: naive demodulation of 16 kHz line-in produced only
+            # hallucinated unit IDs (use multimon-ng for real paging decode).
             decoded = {}
-            try:
-                sig = analyze_tones(seg, sr, silence_rms=config.WHISPER_SILENCE_RMS)
-                if sig.get("dtmf") and len(sig["dtmf"]) >= 2:
-                    dtmf = sig["dtmf"]
-                    # Filter false positives:
-                    # - >50% are A/B/C/D = voice harmonics
-                    # - all same digit = voice sustaining one formant
-                    rare = sum(1 for c in dtmf if c in "ABCD")
-                    if rare <= len(dtmf) * 0.5 and len(set(dtmf)) > 1:
-                        decoded["dtmf"] = dtmf
-                if sig.get("tones"):
-                    # Store raw tones list (already filtered to >= 0.5s by _steady_tones)
-                    decoded["tones"] = sig["tones"]
-                if sig.get("data_burst"):
-                    decoded["data_burst"] = True
-            except Exception:
-                pass
-            try:
-                m = morse_decode(seg, sr)
-                if m and m.get("text") and m.get("confidence", 0) > 0.7 and len(m["text"]) >= 5:
-                    # Filter false positives: reject if only E and T (simplest patterns)
-                    unique = set(m["text"].replace(" ", ""))
-                    if not unique.issubset({"E", "T"}):
-                        decoded["morse"] = m["text"]
-            except Exception:
-                pass
-            try:
-                fsk = decode_fsk(seg, sr)
-                if fsk:
-                    decoded["fsk"] = format_fsk(fsk)
-            except Exception:
-                pass
+            chan_l = (state.channel_name or state.display_name or "").lower()
+            if _channel_enabled(chan_l, config.DTMF_CHANNELS) or \
+               _channel_enabled(chan_l, config.TONE_CHANNELS):
+                try:
+                    sig = analyze_tones(seg, sr, silence_rms=config.WHISPER_SILENCE_RMS)
+                    if _channel_enabled(chan_l, config.DTMF_CHANNELS) \
+                            and sig.get("dtmf") and len(sig["dtmf"]) >= 3:
+                        dtmf = sig["dtmf"]
+                        # Reject voice-harmonic artifacts: real DTMF rarely uses
+                        # the A/B/C/D column, and a single repeated digit is a
+                        # sustained formant, not touch-tones.
+                        rare = sum(1 for c in dtmf if c in "ABCD")
+                        if rare == 0 and len(set(dtmf)) > 1:
+                            decoded["dtmf"] = dtmf
+                    if _channel_enabled(chan_l, config.TONE_CHANNELS) and sig.get("tones"):
+                        decoded["tones"] = sig["tones"]
+                except Exception:
+                    pass
+            if _channel_enabled(chan_l, config.MORSE_CHANNELS):
+                try:
+                    m = morse_decode(seg, sr)
+                    if m and m.get("text") and m.get("confidence", 0) > 0.85 \
+                            and len(m["text"].replace(" ", "")) >= 4:
+                        unique = set(m["text"].replace(" ", ""))
+                        if not unique.issubset({"E", "T", "I"}):
+                            decoded["morse"] = m["text"]
+                except Exception:
+                    pass
 
             # Write placeholder to DB IMMEDIATELY
             record_id = _generate_record_id()

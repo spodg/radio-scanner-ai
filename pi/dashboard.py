@@ -112,11 +112,9 @@ def _build_decoded_display(record):
         parts.append(f'<span class="badge b-dtmf" data-dtype="dtmf">DTMF:{d["dtmf"]}</span>')
     if d.get("morse"):
         parts.append(f'<span class="badge b-morse" data-dtype="morse">CW:{d["morse"]}</span>')
-    if d.get("fsk"):
-        parts.append(f'<span class="badge b-fsk" data-dtype="fsk">{d["fsk"][:30]}</span>')
     if d.get("tones") and isinstance(d["tones"], list):
         shown = ", ".join(f"{f:.0f}Hz/{dur:.1f}s" for f, dur in d["tones"][:3])
-        parts.append(f'<span class="badge b-fsk" data-dtype="tones">{shown}</span>')
+        parts.append(f'<span class="badge b-tones" data-dtype="tones">{shown}</span>')
     # Text-based decoders (stored in 'decoded_text' field)
     dt_field = record.get("decoded_text") or {}
     if dt_field.get("codes"):
@@ -213,7 +211,7 @@ tr:hover{background:#1a2744}
 .col-decoded .badge{display:inline-block;padding:1px 5px;border-radius:3px;font-size:10px;margin:1px}
 .col-decoded .b-code{background:#1565c0}.col-decoded .b-plate{background:#2e7d32}
 .col-decoded .b-phone{background:#6a1b9a}.col-decoded .b-dtmf{background:#ef6c00}
-.col-decoded .b-morse{background:#7e57c2}.col-decoded .b-fsk{background:#00695c}
+.col-decoded .b-morse{background:#7e57c2}.col-decoded .b-tones{background:#00695c}
 .decoded-filters{display:flex;gap:6px;flex-wrap:wrap;align-items:center;padding:5px 0;margin-bottom:6px}
 .decoded-filters span.df-label{font-size:10px;color:#888;margin-right:2px;white-space:nowrap}
 .decoded-filters .df-btn{padding:2px 7px;background:transparent;border:1px solid #555;color:#888;border-radius:3px;font-size:10px;cursor:pointer;transition:all .15s}
@@ -321,7 +319,6 @@ HTML += """<form class="controls" method="GET" id="filter-form">
 <span class="df-label">Decoded:</span>
 <button type="button" class="df-btn active" data-dtype="dtmf">DTMF</button>
 <button type="button" class="df-btn active" data-dtype="morse">CW</button>
-<button type="button" class="df-btn active" data-dtype="fsk">FSK</button>
 <button type="button" class="df-btn active" data-dtype="tones">Tones</button>
 <button type="button" class="df-btn active" data-dtype="codes">Codes</button>
 <button type="button" class="df-btn active" data-dtype="plates">Plates</button>
@@ -456,7 +453,7 @@ HTML += """<script>
 // ========== Decoded type filters ==========
 (function() {
     const DKEY = 'scanner_decoded_visible';
-    const ALL_TYPES = ['dtmf','morse','fsk','tones','codes','plates','phones'];
+    const ALL_TYPES = ['dtmf','morse','tones','codes','plates','phones'];
     let visible = new Set(ALL_TYPES);
 
     function load() {

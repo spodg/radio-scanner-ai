@@ -26,8 +26,11 @@ def run_text_decoders(text, channel_name):
         pass
     try:
         phones = detect_phones(text)
-        if phones:
-            results["phones"] = [p["phone"] for p in phones]
+        # Only surface confident matches; "low" confidence is almost always
+        # transcript digit-salad (7-digit runs with no area code).
+        kept = [p["phone"] for p in phones if p.get("confidence") in ("high", "medium")]
+        if kept:
+            results["phones"] = kept
     except Exception:
         pass
     try:

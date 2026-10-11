@@ -197,15 +197,9 @@ PROFILES = [
 # counties like Adams, Noble, DeKalb, Whitley). We use the Allen County signal
 # scheme + Indiana 10-codes as a best guess and flag it approximate. This is
 # ONLY used for channels that look like law enforcement (see pick_profile).
-# Generic fallback for Indiana Project Hoosier agencies outside Allen County /
-# Fort Wayne (e.g. Noble, DeKalb, Whitley). Based on Allen County's broad set
-# but with ISP-standard overrides where they differ (signal 60 = Narcotics,
-# NOT Homicide).
-_HOOSIER_SIGNALS = {**ALLEN_SIGNALS, **ISP_SIGNALS}
-
 DEFAULT_PROFILE = Profile(
     name="Indiana (generic)",
-    signals=_HOOSIER_SIGNALS,
+    signals=ALLEN_SIGNALS,
     ten_codes=INDIANA_TEN_CODES,
     uses_bare_signals=True,
     keywords=[],
@@ -367,8 +361,15 @@ _UNIT_PREFIX_RE = re.compile(
     r'room|zone|floor|level|code|route|highway|interstate)\s*$',
     re.IGNORECASE)
 
-# 10-code: "10-42", "10 42", "1042". Tolerant of spaces/hyphen between parts.
-_TEN_RE = re.compile(r"\b10\s*-?\s*(\d{1,2})\b")
+# 10-code matching. Two accepted forms:
+#   1. Separated: "10-42" or "10 42" (hyphen/space between the parts).
+#   2. Glued 4-digit: "1042" where the trailing two digits are 10-99.
+# We deliberately REJECT glued 3-digit forms ("107", "109", "100".."109"):
+# those are almost always a unit/address/mileage number, not "10-7"/"10-0", and
+# were the single largest source of false 10-codes. A glued 4-digit "1042" is
+# far more likely a real high code than a unit number, so it is kept.
+_TEN_SEP_RE = re.compile(r"\b10[\s-]+(\d{1,2})\b")
+_TEN_GLUED_RE = re.compile(r"\b10([1-9]\d)\b")
 # Explicit "signal 22" / "sig 22" / "signal-22".
 _SIGNAL_RE = re.compile(r"\b(?:signal|sig)\s*[-#]?\s*(\d{1,3})\b")
 # Any bare number.
@@ -390,16 +391,18 @@ def decode_text(text: str, profile: Profile = None):
     seen = set()
     consumed_spans = []   # char ranges used by 10-codes, so we don't re-read them
 
-    # 1) 10-codes first (anchored on the leading "10").
-    for m in _TEN_RE.finditer(norm):
-        num = int(m.group(1))
-        code = f"10-{num}"
-        if code in profile.ten_codes:
-            if ("ten", num) not in seen:
-                seen.add(("ten", num))
-                results.append({"code": code, "type": "10-code",
-                                "meaning": profile.ten_codes[code]})
-            consumed_spans.append(m.span())
+    # 1) 10-codes first (anchored on the leading "10"). Separated form, then
+    #    glued 4-digit form.
+    for rx in (_TEN_SEP_RE, _TEN_GLUED_RE):
+        for m in rx.finditer(norm):
+            num = int(m.group(1))
+            code = f"10-{num}"
+            if code in profile.ten_codes:
+                if ("ten", num) not in seen:
+                    seen.add(("ten", num))
+                    results.append({"code": code, "type": "10-code",
+                                    "meaning": profile.ten_codes[code]})
+                consumed_spans.append(m.span())
 
     def in_consumed(pos):
         return any(a <= pos < b for a, b in consumed_spans)

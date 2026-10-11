@@ -22,12 +22,38 @@ import re
 # address, or other numeric data officers read digit-by-digit).
 LOCAL_AREA_CODES = {"260", "463"}
 
-# All valid US area codes start with 2-9 (first digit) and the second digit
-# is 0-9 (no restriction since 1995 when interchangeable NPA was introduced).
-# We'll accept any 3-digit sequence where the first digit is 2-9 as a
-# plausible area code.
+# NANP rules: a valid area code (NPA) or exchange (NXX) is 3 digits where the
+# first digit is 2-9. N11 codes (211, 311, ... 911) are reserved service codes,
+# never valid as an NPA or NXX. These checks cut most digit-salad false matches.
+def _valid_npa_nxx(s):
+    """Valid NANP area code or central-office exchange (first digit 2-9,
+    not an N11 service code)."""
+    if len(s) != 3 or s[0] not in "23456789":
+        return False
+    if s[1] == "1" and s[2] == "1":   # N11 (211/311/.../911) reserved
+        return False
+    return True
+
+
+# Back-compat alias (area code uses the same NPA validity rule).
 def _valid_area_code(s):
-    return len(s) == 3 and s[0] in "23456789"
+    return _valid_npa_nxx(s)
+
+
+def _is_junk_number(ten):
+    """Reject 10-digit candidates that are clearly transcript digit-salad
+    rather than a dictated phone number: an invalid exchange, or subscriber
+    digits that are all identical / trivially patterned (e.g. 8888888, 7777357
+    heard when someone counts or a tone sequence is transcribed)."""
+    nxx = ten[3:6]
+    if not _valid_npa_nxx(nxx):
+        return True
+    subscriber = ten[6:]           # last 4 digits
+    if len(set(ten[3:])) <= 2:     # 7 subscriber digits span <=2 distinct values
+        return True
+    if len(set(subscriber)) == 1:  # xxxx repeated last four
+        return True
+    return False
 
 
 def _looks_like_date(digits):
@@ -108,14 +134,15 @@ def detect_phones(text: str) -> list:
 
         if len(digits) == 11 and digits[0] == "1":
             # 1 + area code + number
-            area = digits[1:4]
-            if _valid_area_code(area):
-                phone = _format_phone(digits[1:])
+            ten = digits[1:]
+            area = ten[:3]
+            if _valid_area_code(area) and not _is_junk_number(ten):
+                phone = _format_phone(ten)
                 confidence = "high" if area in LOCAL_AREA_CODES else "medium"
 
         elif len(digits) == 10:
             area = digits[:3]
-            if _valid_area_code(area):
+            if _valid_area_code(area) and not _is_junk_number(digits):
                 phone = _format_phone(digits)
                 confidence = "high" if area in LOCAL_AREA_CODES else "medium"
 
@@ -123,6 +150,11 @@ def detect_phones(text: str) -> list:
             # Local number without area code — but first check if it looks
             # like a date (MMDDYYY, MDDYYYY, etc.). Common false positive.
             if _looks_like_date(digits):
+                continue
+            # Require a valid exchange and non-trivial digits, else it's almost
+            # certainly transcript digit-salad (a 7-digit local number read on
+            # the air is rare and ambiguous).
+            if not _valid_npa_nxx(digits[:3]) or len(set(digits)) <= 3:
                 continue
             phone = f"{digits[:3]}-{digits[3:]}"
             confidence = "low"
