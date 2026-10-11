@@ -370,6 +370,11 @@ _UNIT_PREFIX_RE = re.compile(
 # far more likely a real high code than a unit number, so it is kept.
 _TEN_SEP_RE = re.compile(r"\b10[\s-]+(\d{1,2})\b")
 _TEN_GLUED_RE = re.compile(r"\b10([1-9]\d)\b")
+# Date-of-birth context: officers read a DOB as "...10 23 1964", where the
+# month ("10") then looks like a 10-code. Suppress code matches that start
+# within a short window after one of these cues.
+_DOB_CONTEXT_RE = re.compile(r"\b(?:date of birth|d\.?o\.?b\.?|born|birthday)\b",
+                             re.IGNORECASE)
 # Explicit "signal 22" / "sig 22" / "signal-22".
 _SIGNAL_RE = re.compile(r"\b(?:signal|sig)\s*[-#]?\s*(\d{1,3})\b")
 # Any bare number.
@@ -391,10 +396,19 @@ def decode_text(text: str, profile: Profile = None):
     seen = set()
     consumed_spans = []   # char ranges used by 10-codes, so we don't re-read them
 
+    # Positions of date-of-birth cues; a number right after one is a DOB month,
+    # not a 10-code. We suppress code matches starting within 20 chars of a cue.
+    dob_ends = [m.end() for m in _DOB_CONTEXT_RE.finditer(norm)]
+
+    def near_dob(pos):
+        return any(0 <= pos - e <= 20 for e in dob_ends)
+
     # 1) 10-codes first (anchored on the leading "10"). Separated form, then
     #    glued 4-digit form.
     for rx in (_TEN_SEP_RE, _TEN_GLUED_RE):
         for m in rx.finditer(norm):
+            if near_dob(m.start()):
+                continue
             num = int(m.group(1))
             code = f"10-{num}"
             if code in profile.ten_codes:
