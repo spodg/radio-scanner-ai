@@ -11,9 +11,11 @@ ExecStartPre=+/home/pi/scanner/ensure_nas.sh
 ExecStart=/home/pi/scanner/venv/bin/python3 /home/pi/scanner/dashboard_updated.py
 Restart=always
 RestartSec=5
-# Dashboard is lightweight — protect from OOM kill
-OOMScoreAdjust=-500
-MemoryMax=150M
+
+# Dashboard is lightweight; keep it responsive and protected from OOM.
+CPUWeight=100
+MemoryMax=200M
+OOMScoreAdjust=-700
 
 [Install]
 WantedBy=multi-user.target

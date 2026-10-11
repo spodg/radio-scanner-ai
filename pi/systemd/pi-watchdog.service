@@ -1,0 +1,9 @@
+[Unit]
+Description=Pi Scanner Watchdog (CPU/load recovery)
+
+[Service]
+Type=oneshot
+ExecStart=/home/pi/scanner/watchdog.sh
+# The watchdog itself must always run even when the system is loaded.
+Nice=-10
+CPUWeight=1000

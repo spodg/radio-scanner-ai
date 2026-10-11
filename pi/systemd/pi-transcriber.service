@@ -10,14 +10,23 @@ WorkingDirectory=/home/pi/scanner
 ExecStart=/home/pi/scanner/venv/bin/python3 /home/pi/scanner/pi_transcriber.py
 Restart=always
 RestartSec=15
-# Whisper is CPU-heavy but non-critical — throttle aggressively
-Nice=15
-CPUQuota=200%
-# Memory cap: Whisper tiny.en uses ~200MB; cap at 300MB
-MemoryMax=300M
+
+# --- CPU containment ---
+# Pin Whisper to CPU cores 2-3 only. Cores 0-1 stay free for the capture
+# process, sshd, and the dashboard so the Pi NEVER becomes unresponsive.
+AllowedCPUs=2-3
+# Hard cap: at most 1.5 cores of actual compute even within those 2 cores.
+CPUQuota=150%
+# Lowest scheduling priority and weight — always yields to everything else.
+Nice=19
+CPUWeight=10
+IOWeight=10
+
+# --- Memory containment ---
+MemoryHigh=250M
+MemoryMax=320M
 MemorySwapMax=50M
-# Expendable: kill this first if system runs out of memory
-OOMScoreAdjust=500
+OOMScoreAdjust=800
 
 [Install]
 WantedBy=multi-user.target

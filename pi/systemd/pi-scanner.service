@@ -11,11 +11,18 @@ ExecStartPre=+/home/pi/scanner/ensure_nas.sh
 ExecStart=/home/pi/scanner/venv/bin/python3 /home/pi/scanner/pi_scanner.py
 Restart=always
 RestartSec=10
-# Memory limit: cap at 600MB to prevent OOM freeze (restarts if exceeded)
+
+# --- CPU: capture is the priority, give it dedicated cores 0-1 ---
+# (ffmpeg conversions spawned by the cleanup worker also run here, niced.)
+AllowedCPUs=0-1
+CPUWeight=200
+# No hard CPUQuota — capture must never be throttled, but it only uses
+# ~0.5 core steady-state; the ffmpeg conversions are what need headroom.
+
+# --- Memory ---
+MemoryHigh=400M
 MemoryMax=600M
-MemorySwapMax=200M
-# CPU: allow up to 3 of 4 cores
-CPUQuota=300%
+MemorySwapMax=100M
 
 [Install]
 WantedBy=multi-user.target
