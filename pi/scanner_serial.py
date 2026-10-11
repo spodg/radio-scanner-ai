@@ -115,7 +115,6 @@ class ScannerPoller(threading.Thread):
         self._active_since = 0.0
         # Stuck channel watchdog
         self.max_hold_sec = 60  # max seconds before forcing channel change
-        self._avoided = {}  # freq -> avoid_until timestamp
 
     def stop(self):
         self._stop_evt.set()
@@ -162,7 +161,6 @@ class ScannerPoller(threading.Thread):
                         time.sleep(0.3)
                     except Exception as e:
                         print(f"[watchdog] Error sending L/O: {e}")
-                    self._avoided[freq] = now + 300  # record for logging
 
             # Periodic screen update callback (if set)
             if hasattr(self, 'on_poll') and self.on_poll:

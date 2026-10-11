@@ -31,9 +31,7 @@ except OSError:
     pass
 
 # Text decoders
-from codes import decode_for
-from phonetic import decode_plates
-from phone import detect_phones
+from text_decoders import run_text_decoders as _run_text_decoders
 
 POLL_INTERVAL = 3  # seconds between checking for new items
 GPU_CHECK_INTERVAL = getattr(config, 'GPU_CHECK_INTERVAL', 10)
@@ -68,34 +66,6 @@ def _signal_handler(sig, frame):
 
 signal.signal(signal.SIGTERM, _signal_handler)
 signal.signal(signal.SIGINT, _signal_handler)
-
-
-def _run_text_decoders(text, channel_name):
-    """Run text-based decoders on a transcript."""
-    if not text:
-        return {}
-    results = {}
-    try:
-        plates = decode_plates(text)
-        if plates:
-            results["plates"] = [p["plate"] for p in plates]
-    except Exception:
-        pass
-    try:
-        phones = detect_phones(text)
-        if phones:
-            results["phones"] = [p["phone"] for p in phones]
-    except Exception:
-        pass
-    try:
-        profile, codes = decode_for(text, channel_name)
-        if codes:
-            results["codes"] = [{"code": c["code"], "meaning": c["meaning"]} for c in codes]
-            if profile:
-                results["code_profile"] = profile.name
-    except Exception:
-        pass
-    return results
 
 
 def check_gpu_online():

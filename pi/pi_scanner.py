@@ -24,6 +24,8 @@ Stop: Ctrl+C or systemd stop
 
 import os
 import sys
+import re
+import glob
 import json
 import time
 import uuid
@@ -40,40 +42,12 @@ from audio_capture import ALSAAudioCapture
 from tones import analyze as analyze_tones
 from morse import decode as morse_decode
 from fsk_decode import decode_fsk, format_results as format_fsk
-from codes import decode_for
-from phonetic import decode_plates
-from phone import detect_phones, format_phones
 import scanner_db
 from nas_sync import get_clips_dir
 from audio_health import AudioHealthMonitor, find_usb_audio_device
 
 
-def _run_text_decoders(text, channel_name):
-    """Run text-based decoders on a transcript. Returns a dict of findings."""
-    if not text:
-        return {}
-    results = {}
-    try:
-        plates = decode_plates(text)
-        if plates:
-            results["plates"] = [p["plate"] for p in plates]
-    except Exception:
-        pass
-    try:
-        phones = detect_phones(text)
-        if phones:
-            results["phones"] = [p["phone"] for p in phones]
-    except Exception:
-        pass
-    try:
-        profile, codes = decode_for(text, channel_name)
-        if codes:
-            results["codes"] = [{"code": c["code"], "meaning": c["meaning"]} for c in codes]
-            if profile:
-                results["code_profile"] = profile.name
-    except Exception:
-        pass
-    return results
+from text_decoders import run_text_decoders as _run_text_decoders
 
 
 def _generate_record_id():
@@ -87,7 +61,6 @@ def _find_serial_port():
     Prefers the configured port, then scans for any ttyACM*/ttyUSB* device
     (survives the scanner reconnecting under a different name).
     """
-    import glob
     # Configured port first
     if os.path.exists(config.SERIAL_PORT):
         return config.SERIAL_PORT
@@ -303,7 +276,6 @@ class PiScannerStation:
         self._write_status("receiving", state.display_name)
 
     def _on_stop(self, state: ReceptionState, duration: float):
-        import sys
         cid = self._active_capture_id
         start = self._active_start_time
         self._active_capture_id = None
@@ -328,11 +300,6 @@ class PiScannerStation:
         self._audio_health.report_capture(had_audio=True)
 
         print(f"[_on_stop] processing {state.display_name} dur={duration:.1f}s rms={rms:.4f} samples={audio.size}", file=sys.stderr, flush=True)
-
-        # Skip dead silence
-        rms = float(np.sqrt(np.mean(audio ** 2)))
-        if rms < config.WHISPER_SILENCE_RMS:
-            return
 
         sr = config.AUDIO_SAMPLE_RATE
 
@@ -456,9 +423,8 @@ class PiScannerStation:
         import subprocess as sp
         time.sleep(15)  # initial delay to let things settle
         # Lower priority — cleanup is not time-critical
-        import os as _os
         try:
-            _os.nice(15)
+            os.nice(15)
         except OSError:
             pass
         print("[cleanup] WAV-to-MP3 + text decoder worker started.")
@@ -525,7 +491,6 @@ class PiScannerStation:
         # Re-ingest orphan WAV files (saved but not in DB — lost during restart).
         # Only scan today's and yesterday's date folders (not all history) to
         # avoid an expensive recursive glob over the whole NAS every cycle.
-        import glob as _glob
         try:
             now = time.time()
             today = dt.datetime.now()
@@ -539,7 +504,7 @@ class PiScannerStation:
             for folder in scan_folders:
                 folder_path = os.path.join(config.CLIPS_DIR, folder)
                 if os.path.isdir(folder_path):
-                    candidate_wavs.extend(_glob.glob(os.path.join(folder_path, "*.wav")))
+                    candidate_wavs.extend(glob.glob(os.path.join(folder_path, "*.wav")))
 
             if not candidate_wavs:
                 return
@@ -589,11 +554,10 @@ class PiScannerStation:
                     time_str = dt.datetime.now().isoformat(timespec="seconds")
 
                 # Parse metadata from filename
-                import re as _re
                 fname_noext = fname.rsplit('.', 1)[0]
-                m = _re.match(r'\d{8}_\d{6}(?:_\d+)?_(.*)', fname_noext)
+                m = re.match(r'\d{8}_\d{6}(?:_\d+)?_(.*)', fname_noext)
                 raw_name = m.group(1) if m else fname_noext
-                parts = _re.split(r'_{3,}', raw_name)
+                parts = re.split(r'_{3,}', raw_name)
                 parts = [p.replace('_', ' ').strip() for p in parts if p.strip()]
                 r_system = parts[0] if len(parts) >= 1 else ""
                 r_group = parts[1] if len(parts) >= 2 else ""

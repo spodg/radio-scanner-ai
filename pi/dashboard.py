@@ -33,41 +33,7 @@ except ImportError:
     _nas_status_available = False
 
 # Text decoders for inline decoding when GPU posts results
-try:
-    from codes import decode_for
-    from phonetic import decode_plates
-    from phone import detect_phones
-    _DECODERS_AVAILABLE = True
-except ImportError:
-    _DECODERS_AVAILABLE = False
-
-
-def _run_text_decoders(text, channel_name):
-    """Run text-based decoders on a transcript. Returns a dict of findings."""
-    if not _DECODERS_AVAILABLE or not text:
-        return {}
-    results = {}
-    try:
-        plates = decode_plates(text)
-        if plates:
-            results["plates"] = [p["plate"] for p in plates]
-    except Exception:
-        pass
-    try:
-        phones = detect_phones(text)
-        if phones:
-            results["phones"] = [p["phone"] for p in phones]
-    except Exception:
-        pass
-    try:
-        profile, codes = decode_for(text, channel_name)
-        if codes:
-            results["codes"] = [{"code": c["code"], "meaning": c["meaning"]} for c in codes]
-            if profile:
-                results["code_profile"] = profile.name
-    except Exception:
-        pass
-    return results
+from text_decoders import run_text_decoders as _run_text_decoders
 
 # Config
 STATUS_FILE = Path("/home/pi/scanner/status.json")
