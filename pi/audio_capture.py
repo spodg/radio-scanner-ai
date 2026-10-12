@@ -12,11 +12,20 @@ pre-buffer and begin accumulating new samples.
 """
 
 import os
+import time
 import subprocess
 import threading
 import struct
 import numpy as np
 from collections import deque
+
+# A real transmission is bounded by the stuck-channel watchdog (~60s). Any
+# capture that keeps growing past this is an orphan — begin_capture() ran but
+# end_capture() never did (an exception after begin_capture, a missed on_stop,
+# or a new on_start overwriting the id). The reader thread would otherwise feed
+# such a capture ~64KB/s forever and leak the whole process into swap. Cap each
+# capture's length and evict stale ones so a missed end_capture can't leak.
+_MAX_CAPTURE_SEC = 90.0
 
 
 class ALSAAudioCapture:
@@ -35,9 +44,11 @@ class ALSAAudioCapture:
         prebuf_samples = int(prebuffer_sec * sample_rate)
         self._ring = deque(maxlen=prebuf_samples)
 
-        # Active captures
+        # Active captures: cid -> {"chunks": [np.ndarray], "samples": int,
+        #                          "started": float}
         self._captures = {}
         self._next_id = 0
+        self._max_capture_samples = int(_MAX_CAPTURE_SEC * sample_rate)
 
     def start(self):
         """Start the arecord process and reader thread."""
@@ -116,13 +127,24 @@ class ALSAAudioCapture:
 
             # Convert to float32
             samples = np.frombuffer(raw, dtype="<i2").astype("float32") / 32767.0
+            now = time.time()
             with self._lock:
-                # Feed ring buffer
-                for s in samples:
-                    self._ring.append(s)
-                # Feed active captures
-                for buf in self._captures.values():
-                    buf.append(samples.copy())
+                # Feed ring buffer (deque with maxlen drops oldest automatically)
+                self._ring.extend(samples)
+                # Feed active captures, bounding each and evicting orphans.
+                stale = []
+                for cid, cap in self._captures.items():
+                    # Evict captures that have run longer than any real
+                    # transmission (orphaned by a missed end_capture).
+                    if now - cap["started"] > _MAX_CAPTURE_SEC:
+                        stale.append(cid)
+                        continue
+                    # Stop growing once a capture hits the hard sample cap.
+                    if cap["samples"] < self._max_capture_samples:
+                        cap["chunks"].append(samples.copy())
+                        cap["samples"] += samples.size
+                for cid in stale:
+                    self._captures.pop(cid, None)
 
     def begin_capture(self) -> int:
         """Start a new capture, seeded with the pre-buffer."""
@@ -131,16 +153,20 @@ class ALSAAudioCapture:
             self._next_id += 1
             # Seed with pre-buffer
             prebuf = np.array(list(self._ring), dtype="float32")
-            self._captures[cid] = [prebuf] if prebuf.size > 0 else []
+            self._captures[cid] = {
+                "chunks": [prebuf] if prebuf.size > 0 else [],
+                "samples": int(prebuf.size),
+                "started": time.time(),
+            }
         return cid
 
     def end_capture(self, cid: int) -> np.ndarray:
         """End a capture and return the audio as a float32 array."""
         with self._lock:
-            chunks = self._captures.pop(cid, [])
-        if not chunks:
+            cap = self._captures.pop(cid, None)
+        if not cap or not cap["chunks"]:
             return np.zeros(0, dtype="float32")
-        return np.concatenate(chunks).astype("float32")
+        return np.concatenate(cap["chunks"]).astype("float32")
 
     def __enter__(self):
         self.start()
