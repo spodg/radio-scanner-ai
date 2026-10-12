@@ -43,10 +43,12 @@ GPU_SERVER_URL = getattr(config, 'GPU_SERVER_URL', '')
 # grinds the CPU forever, wedging the whole Pi. These limits keep local
 # transcription within the Pi's real capacity and let it degrade gracefully.
 
-# Whisper threads. The service is pinned to 2 cores (systemd AllowedCPUs=2-3),
-# separate from the scanner (cores 0-1), so using both lets local transcription
-# run ~2x faster. Nice=19/CPUWeight=10 keep it from disturbing the scanner.
-N_THREADS = int(os.environ.get("PI_WHISPER_THREADS", "2"))
+# Whisper threads. The service is pinned to 3 cores (systemd AllowedCPUs=1-3).
+# Core 0 stays reserved for the scanner; the scanner also keeps core 1 but at
+# CPUWeight=200 vs the transcriber's 10, so capture always wins when they share
+# core 1. Using 3 threads lets local transcription run ~3x faster than single-
+# threaded, and CPUQuota=280% caps total transcriber load at ~70% of the Pi.
+N_THREADS = int(os.environ.get("PI_WHISPER_THREADS", "3"))
 
 # Small pause between clips so the niced transcriber yields briefly. It runs on
 # its own cores, so this no longer needs to be a full second.
@@ -275,10 +277,8 @@ def main():
             time.sleep(POLL_INTERVAL)
             continue
 
-        # Load model on demand (single thread — we are pinned to 2 cores by
-        # systemd AllowedCPUs. The service is pinned to 2 cores (AllowedCPUs
-        # 2-3), so use both of them (N_THREADS=2) — single-threaded left one
-        # allocated core idle and transcription ~2x slower than it needs to be.
+        # Load model on demand with N_THREADS workers (see N_THREADS above:
+        # pinned to cores 1-3, capped at CPUQuota=280% = ~70% of the Pi).
         if model is None:
             from pywhispercpp.model import Model
             print(f"[transcriber] Loading Whisper model ({N_THREADS} thread(s))...")

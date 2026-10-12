@@ -14,12 +14,13 @@ RestartSec=15
 # --- CPU containment ---
 # Pin Whisper to CPU cores 2-3 only. Cores 0-1 stay free for the capture
 # process, sshd, and the dashboard so the Pi NEVER becomes unresponsive.
-AllowedCPUs=2-3
-# Allow both allocated cores (= 50% of the 4-core Pi) so local transcription
-# runs at full pace on tiny.en with n_threads=2. The cpuset above keeps it off
-# cores 0-1, so even at this cap the capture/dashboard stay responsive and total
-# Pi CPU stays well under ~80%.
-CPUQuota=200%
+AllowedCPUs=1-3
+# Allow 3 cores (= up to 70% of the 4-core Pi) so local transcription runs at
+# full pace on tiny.en with n_threads=3. Core 0 stays reserved for the scanner;
+# the scanner also keeps core 1 but at CPUWeight=200 vs this service's 10, so
+# capture always wins when they share core 1. CPUQuota caps total transcriber
+# load at 280% so ~30% of the Pi stays free and the dashboard stays responsive.
+CPUQuota=280%
 # Lowest scheduling priority and weight — always yields to everything else.
 Nice=19
 CPUWeight=10
